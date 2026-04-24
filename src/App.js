@@ -5,22 +5,36 @@ const API   = "https://api.anthropic.com/v1/messages"
 const MODEL = "claude-3-5-sonnet-20241022"
 const pause = ms => new Promise(r => setTimeout(r, ms))
 
-// API key stored in memory (set from UI)
+// API key — stored at module level and updated from UI
 let _key = ""
 
 async function askClaude(messages, system = "", maxTokens = 2000) {
+  const headers = {
+    "Content-Type": "application/json",
+    "anthropic-version": "2023-06-01",
+    "anthropic-dangerous-direct-browser-access": "true"
+  }
+  // Only add key header if we have one
+  if (_key) headers["x-api-key"] = _key
+
   const res = await fetch(API, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": _key,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true"
-    },
+    headers,
     body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, system, messages })
   })
+
+  // Show HTTP status in error if not OK
+  if (!res.ok) {
+    let errMsg = `HTTP ${res.status}`
+    try {
+      const errBody = await res.json()
+      errMsg = `HTTP ${res.status}: ${errBody?.error?.message || JSON.stringify(errBody?.error) || res.statusText}`
+    } catch {}
+    throw new Error(errMsg)
+  }
+
   const d = await res.json()
-  if (d.error) throw new Error(d.error.message)
+  if (d.error) throw new Error(d.error.message || JSON.stringify(d.error))
   return d.content?.[0]?.text ?? ""
 }
 
@@ -630,9 +644,17 @@ SCRIPT SECTION:\n${chunk.text}`
                 <div className="key-row">
                   <input className="key-input" type="password" placeholder="sk-ant-…"
                     value={apiKey} onChange={e=>setApiKey(e.target.value)}
-                    onKeyDown={e=>{if(e.key==="Enter"&&apiKey.startsWith("sk-ant-")){_key=apiKey;setKeyReady(true)}}}/>
-                  <button className="go-btn" disabled={!apiKey.startsWith("sk-ant-")}
-                    onClick={()=>{_key=apiKey;setKeyReady(true)}}>
+                    onKeyDown={e=>{
+                      if(e.key==="Enter"&&apiKey.trim().length>10){
+                        _key=apiKey.trim()
+                        setKeyReady(true)
+                      }
+                    }}/>
+                  <button className="go-btn" disabled={apiKey.trim().length<10}
+                    onClick={()=>{
+                      _key=apiKey.trim()
+                      setKeyReady(true)
+                    }}>
                     Continue →
                   </button>
                 </div>
