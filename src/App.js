@@ -5,10 +5,18 @@ const API   = "https://api.anthropic.com/v1/messages"
 const MODEL = "claude-sonnet-4-20250514"
 const pause = ms => new Promise(r => setTimeout(r, ms))
 
+// API key stored in memory (set from UI)
+let _key = ""
+
 async function askClaude(messages, system = "", maxTokens = 2000) {
   const res = await fetch(API, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": _key,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true"
+    },
     body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, system, messages })
   })
   const d = await res.json()
@@ -173,6 +181,8 @@ function ElapsedTimer({running}){
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function StagePrompt(){
   const [screen,   setScreen]   = useState("upload")
+  const [apiKey,   setApiKey]   = useState("")
+  const [keyReady, setKeyReady] = useState(false)
   const [procStep, setProcStep] = useState("")
   const [procProg, setProcProg] = useState(0)
   const [procErr,  setProcErr]  = useState("")
@@ -571,7 +581,33 @@ SCRIPT SECTION:\n${chunk.text}`
               <h1 className="brand-name">StagePrompt</h1>
               <p className="brand-sub">Your AI line-learning companion</p>
             </div>
-            <DropZone onProcess={processFiles}/>
+
+            {!keyReady ? (
+              <div className="key-card">
+                <h2 className="key-title">Enter your Anthropic API key</h2>
+                <p className="key-body">StagePrompt uses Claude AI to read your script. You need a free API key — you only enter this once per session.</p>
+                <ol className="key-steps">
+                  <li>Go to <a href="https://console.anthropic.com" target="_blank" rel="noreferrer">console.anthropic.com</a> and sign up free</li>
+                  <li>Click <strong>API Keys</strong> → <strong>Create Key</strong></li>
+                  <li>Copy the key (starts with <code>sk-ant-</code>) and paste below</li>
+                </ol>
+                <div className="key-row">
+                  <input className="key-input" type="password" placeholder="sk-ant-…"
+                    value={apiKey} onChange={e=>setApiKey(e.target.value)}
+                    onKeyDown={e=>{if(e.key==="Enter"&&apiKey.startsWith("sk-ant-")){_key=apiKey;setKeyReady(true)}}}/>
+                  <button className="go-btn" disabled={!apiKey.startsWith("sk-ant-")}
+                    onClick={()=>{_key=apiKey;setKeyReady(true)}}>
+                    Continue →
+                  </button>
+                </div>
+                <p className="key-note">🔒 Your key stays in your browser — never stored or shared.</p>
+              </div>
+            ) : (
+              <>
+                <DropZone onProcess={processFiles}/>
+                <button className="change-key-btn" onClick={()=>setKeyReady(false)}>Change API key</button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -964,6 +1000,18 @@ const CSS=`
 .go-btn.sm{padding:.48rem 1.05rem;font-size:.82rem}
 .go-btn.full{width:100%;margin-top:.5rem}
 .upload-box{text-align:center;width:100%;max-width:480px}
+.key-card{background:#fff;border:1px solid #E7E5E4;border-radius:14px;padding:1.75rem;text-align:left;margin-top:.5rem}
+.key-title{font-size:1rem;font-weight:700;color:#1C1917;margin-bottom:.4rem}
+.key-body{font-size:.83rem;color:#78716C;line-height:1.6;margin-bottom:.9rem}
+.key-steps{font-size:.82rem;color:#44403C;line-height:1.85;padding-left:1.2rem;margin-bottom:1rem}
+.key-steps a{color:#6366F1;text-underline-offset:2px}
+.key-steps code{background:#F4F3F0;padding:.1rem .35rem;border-radius:4px;font-size:.8rem}
+.key-row{display:flex;gap:.5rem;margin-bottom:.65rem}
+.key-input{flex:1;background:#F4F3F0;border:1px solid #E7E5E4;border-radius:9px;padding:.6rem .85rem;font-family:'Plus Jakarta Sans',sans-serif;font-size:.88rem;color:#1C1917;outline:none;transition:border-color .18s}
+.key-input:focus{border-color:#1C1917;background:#fff}
+.key-note{font-size:.74rem;color:#A8A29E;line-height:1.5}
+.change-key-btn{background:transparent;border:none;color:#A8A29E;font-family:'Plus Jakarta Sans',sans-serif;font-size:.75rem;cursor:pointer;margin-top:.6rem;text-decoration:underline;text-decoration-style:dotted;transition:color .15s}
+.change-key-btn:hover{color:#44403C}
 .brand{margin-bottom:2.5rem}
 .brand-icon{font-size:2.6rem;display:block;margin-bottom:.7rem}
 .brand-name{font-size:2.3rem;font-weight:700;letter-spacing:-.02em;margin-bottom:.3rem}

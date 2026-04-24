@@ -14,5 +14,6 @@
   },
   "devDependencies": {
     "react-scripts": "latest"
-  }
+  },
+  "browserslist": ["last 1 chrome version"] 
 }
