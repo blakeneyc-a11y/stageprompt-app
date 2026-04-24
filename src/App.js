@@ -307,6 +307,7 @@ export default function StagePrompt(){
       content.push({type:"text",text:`Extract ALL text from these ${batch.length} theatre play script page(s). Label each === PAGE N ===. Preserve: character names (CAPS on own line), stage directions (in brackets/parens), act/scene headings, every word of every line. Do not skip or summarise anything. Pages may be slightly rotated — read them regardless.`})
       try{rawTexts.push(await askClaude([{role:"user",content}],"Specialist script OCR. Extract every word faithfully.",Math.min(3000*batch.length,16000)))}
       catch(e){rawTexts.push(`[Pages ${ps}-${pe} error: ${e.message}]`)}
+      await pause(3000) // stay within rate limits
     }
     for(let i=0;i<pdfs.length;i++){
       setProcStep(`Reading PDF${pdfs.length>1?` ${i+1}/${pdfs.length}`:""}…`)
@@ -316,6 +317,7 @@ export default function StagePrompt(){
         {type:"text",text:"Extract ALL text from this theatre play script PDF. Preserve character names (CAPS before their lines), stage directions, act/scene headings, all dialogue verbatim. Do not skip or summarise anything."}
       ]}],"Specialist script OCR.",16000))}
       catch(e){rawTexts.push(`[PDF error: ${e.message}]`)}
+      await pause(3000) // stay within rate limits
     }
 
     const fullText=rawTexts.join("\n\n").trim()
@@ -374,8 +376,8 @@ SCRIPT (part 3):\n${fullText.slice(90000,140000)}`
     const hmatches=[...fullText.matchAll(SCENE_RE)]
 
     // Much larger chunk size — fewer API calls, much faster
-    const MAX_CHUNK = 18000
-    const MIN_ADVANCE = 8000  // always advance at least this much to prevent runaway loops
+    const MAX_CHUNK = 8000   // ~2000 tokens — safe within 30k/min rate limit
+    const MIN_ADVANCE = 5000 // always advance at least this much
     let textChunks = []
 
     if(hmatches.length >= 2){
@@ -418,7 +420,7 @@ SCRIPT (part 3):\n${fullText.slice(90000,140000)}`
       }
     }
 
-    // Hard cap — even a 150-page play should never need more than 40 chunks at 18k chars each
+    // Hard cap — a 150-page play at 8k chars/chunk needs at most ~25 chunks
     if(textChunks.length > 40){
       // Merge smallest adjacent chunks until we're under the cap
       while(textChunks.length > 40){
@@ -477,6 +479,8 @@ SCRIPT SECTION:\n${chunk.text}`
       }catch(e){
         allParsedLines.push({character:null,text:`[API error on ${chunk.label}: ${e.message}]`,isStageDirection:true,scene:chunk.startScene,flagged:true,_ci:ci})
       }
+      // Rate limit: 5s between calls keeps us under 30,000 tokens/min for new accounts
+      if(ci < totalChunks-1) await pause(5000)
     }
 
     // Dedup overlap lines
