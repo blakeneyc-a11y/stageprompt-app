@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react"
 
 // ─── API ──────────────────────────────────────────────────────────────────────
 const API   = "https://api.anthropic.com/v1/messages"
-const MODEL = "claude-haiku-4-5-20251001"
+const MODEL = "claude-sonnet-4-6"
 const pause = ms => new Promise(r => setTimeout(r, ms))
 
 // API key — stored at module level and updated from UI
@@ -322,6 +322,12 @@ export default function StagePrompt(){
     if(!fullText){
       setProcErr("No text could be extracted. Please try a clearer image or a digital PDF."); return
     }
+
+    // Sanity check — show first 120 chars of extracted text so we can verify it's real
+    const preview = fullText.slice(0,120).replace(/\n/g," ")
+    setProcStep(`Text extracted — "${preview}…"`)
+    setProcProg(57)
+    await pause(2500) // pause so user can see the preview
 
     // Step 3: Multi-pass character & heading extraction (handles very long scripts)
     setProcStep("Identifying all characters and scenes across the whole script…"); setProcProg(58)
