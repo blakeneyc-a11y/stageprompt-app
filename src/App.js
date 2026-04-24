@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react"
 
 // ─── API ──────────────────────────────────────────────────────────────────────
 const API   = "https://api.anthropic.com/v1/messages"
-const MODEL = "claude-3-5-sonnet-20241022"
+const MODEL = "claude-haiku-4-5-20251001"
 const pause = ms => new Promise(r => setTimeout(r, ms))
 
 // API key — stored at module level and updated from UI
