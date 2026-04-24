@@ -439,33 +439,65 @@ SCRIPT SECTION:\n${chunk.text}`
       if(!deduped.slice(-10).some(l=>`${l.character}||${(l.text||"").trim().slice(0,80)}`===key)) deduped.push(rest)
     }
 
-    // Group into scenes
+    // Group into scenes — be very forgiving about scene name matching
     const sceneMap=new Map(); const sceneOrder=[]
     for(const line of deduped){
-      const sc=(line.scene||"Scene 1").trim()
+      // Normalise scene name: trim, collapse whitespace
+      const sc=((line.scene||"").trim().replace(/\s+/g," "))||"Scene 1"
       if(!sceneMap.has(sc)){sceneMap.set(sc,[]);sceneOrder.push(sc)}
       sceneMap.get(sc).push(line)
     }
+
+    // If meta gave us scene headings, try to match them to what we got
+    // Use fuzzy matching — "Scene 1" matches "SCENE 1", "Act 1 Scene 1" etc.
+    const fuzzy=s=>s.toLowerCase().replace(/[^a-z0-9]/g,"")
     let orderedNames=sceneOrder
     if(meta.sceneHeadings?.length>0){
-      const ms=new Set(meta.sceneHeadings.map(s=>s.trim()))
-      orderedNames=[...meta.sceneHeadings.filter(s=>sceneMap.has(s.trim())),...sceneOrder.filter(s=>!ms.has(s))]
+      const mapped=[]
+      for(const mh of meta.sceneHeadings){
+        // Try exact match first, then fuzzy
+        const exact=sceneOrder.find(s=>s===mh.trim())
+        const fuzz=exact||sceneOrder.find(s=>fuzzy(s)===fuzzy(mh))
+        if(fuzz&&!mapped.includes(fuzz)) mapped.push(fuzz)
+      }
+      // Add any scenes that didn't match meta headings at the end
+      const extras=sceneOrder.filter(s=>!mapped.includes(s))
+      orderedNames=[...mapped,...extras]
     }
-    let scenes=orderedNames.filter(t=>sceneMap.has(t)).map(title=>({title,lines:sceneMap.get(title)}))
-    if(!scenes.length) scenes=[{title:"Scene 1",lines:[{character:null,text:"No lines found. Please use Review to add lines manually.",isStageDirection:true,flagged:true}]}]
 
+    // Build scenes — fall back to putting ALL lines in one scene if grouping failed
+    let scenes=orderedNames.filter(t=>sceneMap.has(t)).map(title=>({title,lines:sceneMap.get(title)}))
+    if(!scenes.length&&deduped.length>0){
+      // Grouping failed entirely — dump everything into one scene
+      scenes=[{title:"Scene 1",lines:deduped}]
+    }
+    if(!scenes.length){
+      scenes=[{title:"Scene 1",lines:[{character:null,text:"No lines found. Please use Review to add lines manually.",isStageDirection:true,flagged:true}]}]
+    }
+
+    // Collect all character names — from both meta pass AND parsed lines
     const parsedChars=[...new Set(deduped.map(l=>l.character).filter(Boolean))].sort()
     const finalChars=[...new Set([...(meta.characters||[]),...parsedChars])].sort()
+
+    // If we got lines but no chars (meta failed), extract chars from lines only
+    const charList=finalChars.length>0?finalChars:parsedChars
+
     const parsedScript={
       title:meta.title||"Untitled Play",
-      characters:finalChars.map((name,i)=>({name,voiceType:i%2===0?"female":"male",voiceIdx:i})),
+      characters:charList.map((name,i)=>({name,voiceType:i%2===0?"female":"male",voiceIdx:i})),
       scenes
     }
     const allL=scenes.flatMap(s=>s.lines)
+    const dialogueLines=allL.filter(l=>!l.isStageDirection&&l.character)
     const flagged=allL.filter(l=>l.flagged)
     const pct=allL.length?Math.round(flagged.length/allL.length*100):0
-    if(!allL.length||!finalChars.length){setProcErr("No dialogue detected. Please check the file is a play script and try again.");return}
-    setProcStep(pct>50?`⚠ ${pct}% of lines need review.`:flagged.length?`Done — ${allL.length} lines, ${flagged.length} flagged for review.`:`Script read! ${allL.length} lines · ${finalChars.length} characters · ${scenes.length} section${scenes.length!==1?"s":""}`)
+
+    // Only fail if we truly got zero dialogue lines
+    if(dialogueLines.length===0){
+      setProcErr("No dialogue was detected. Please check the file is a play script and try again."); return
+    }
+
+    setProcStep(pct>50?`⚠ ${pct}% of lines need review.`:flagged.length?`Done — ${allL.length} lines, ${flagged.length} flagged for review.`:`Script read! ${dialogueLines.length} lines · ${charList.length} characters · ${scenes.length} section${scenes.length!==1?"s":""}`)
     setScript(parsedScript); setProcProg(100)
     setTimeout(()=>setScreen("review"),800)
   }
