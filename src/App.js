@@ -368,42 +368,70 @@ SCRIPT (part 3):\n${fullText.slice(90000,140000)}`
       }
     }catch{}
 
-    // Step 4: Scene-aware chunking with overlap — each scene becomes its own chunk;
-    //         very long scenes get sub-chunked. Long plays (150pp) handled automatically.
+    // Step 4: Scene-aware chunking — FIXED to never create runaway chunks
     setProcStep("Splitting script into sections…"); setProcProg(64)
     const SCENE_RE=/(?:^|\n)((?:PROLOGUE|EPILOGUE|(?:ACT\s*\d+[\s,]*)?SCENE\s*\d+|Scene\s+\d+|Prologue|Epilogue)[^\n]*)/gi
     const hmatches=[...fullText.matchAll(SCENE_RE)]
-    const MAX_CHUNK=5000, OVERLAP=500
-    let textChunks=[]
 
-    if(hmatches.length>=2){
-      // Pre-heading text (prologue / cast list)
-      if(hmatches[0].index>100)
-        textChunks.unshift({label:"Opening",text:fullText.slice(0,Math.min(hmatches[0].index+300,MAX_CHUNK)),startScene:meta.sceneHeadings[0]||"Prologue"})
+    // Much larger chunk size — fewer API calls, much faster
+    const MAX_CHUNK = 18000
+    const MIN_ADVANCE = 8000  // always advance at least this much to prevent runaway loops
+    let textChunks = []
+
+    if(hmatches.length >= 2){
+      // Split at scene boundaries
+      if(hmatches[0].index > 200){
+        textChunks.push({label:"Opening/Prologue", text:fullText.slice(0, Math.min(hmatches[0].index + 500, MAX_CHUNK)), startScene: meta.sceneHeadings[0]||"Prologue"})
+      }
       for(let i=0;i<hmatches.length;i++){
-        const label=hmatches[i][1].trim()
-        const start=hmatches[i].index
-        const end=i+1<hmatches.length?hmatches[i+1].index:fullText.length
-        const sec=fullText.slice(Math.max(0,start-300),end)
-        if(sec.length>MAX_CHUNK){
-          // Sub-chunk long scenes
-          let pos=0,sub=0
-          while(pos<sec.length){
-            const cut=sec.length>pos+MAX_CHUNK?Math.max(sec.lastIndexOf("\n",pos+MAX_CHUNK),pos+MAX_CHUNK*0.6):sec.length
-            textChunks.push({label:`${label}${sub>0?` (part ${sub+1})`:""}`,text:sec.slice(pos,cut),startScene:label})
-            pos=Math.max(pos+1,cut-OVERLAP); sub++
+        const label = hmatches[i][1].trim()
+        const start = hmatches[i].index
+        const end   = i+1<hmatches.length ? hmatches[i+1].index : fullText.length
+        const sec   = fullText.slice(Math.max(0,start-200), end)
+        if(sec.length > MAX_CHUNK){
+          // Sub-chunk long scenes — SAFE loop with guaranteed advance
+          let pos=0, sub=0
+          while(pos < sec.length){
+            const target = Math.min(pos + MAX_CHUNK, sec.length)
+            // Try to cut at newline but always advance at least MIN_ADVANCE
+            const nlPos  = sec.lastIndexOf("\n", target)
+            const cut    = (nlPos > pos + MIN_ADVANCE) ? nlPos : target
+            textChunks.push({label:`${label}${sub>0?` (part ${sub+1})`:""}`, text:sec.slice(pos,cut), startScene:label})
+            pos = cut  // no overlap — scene context passed via startScene field
+            sub++
           }
         } else {
-          textChunks.push({label,text:sec,startScene:label})
+          textChunks.push({label, text:sec, startScene:label})
         }
       }
     } else {
-      let pos=0,ci=0
-      const hlist=meta.sceneHeadings.length>0?meta.sceneHeadings:["Scene 1"]
-      while(pos<fullText.length){
-        const cut=fullText.length>pos+MAX_CHUNK?Math.max(fullText.lastIndexOf("\n",pos+MAX_CHUNK),pos+MAX_CHUNK*0.6):fullText.length
-        textChunks.push({label:`Part ${ci+1}`,text:fullText.slice(pos,cut),startScene:hlist[Math.min(ci,hlist.length-1)]})
-        pos=Math.max(pos+1,cut-OVERLAP); ci++
+      // No scene headings — fixed-size chunks with SAFE advance
+      const headings = meta.sceneHeadings.length>0 ? meta.sceneHeadings : ["Scene 1"]
+      let pos=0, ci=0
+      while(pos < fullText.length){
+        const target = Math.min(pos + MAX_CHUNK, fullText.length)
+        const nlPos  = fullText.lastIndexOf("\n", target)
+        const cut    = (nlPos > pos + MIN_ADVANCE) ? nlPos : target
+        textChunks.push({label:`Part ${ci+1}`, text:fullText.slice(pos,cut), startScene:headings[Math.min(ci,headings.length-1)]})
+        pos = cut
+        ci++
+      }
+    }
+
+    // Hard cap — even a 150-page play should never need more than 40 chunks at 18k chars each
+    if(textChunks.length > 40){
+      // Merge smallest adjacent chunks until we're under the cap
+      while(textChunks.length > 40){
+        let minIdx=0
+        for(let i=0;i<textChunks.length-1;i++){
+          if(textChunks[i].text.length < textChunks[minIdx].text.length) minIdx=i
+        }
+        const merged = {
+          label: textChunks[minIdx].label,
+          text:  textChunks[minIdx].text + "\n" + textChunks[minIdx+1].text,
+          startScene: textChunks[minIdx].startScene
+        }
+        textChunks.splice(minIdx, 2, merged)
       }
     }
 
