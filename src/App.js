@@ -1,11 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from "react"
+import { createClient } from "@supabase/supabase-js"
+
+// ─── SUPABASE ─────────────────────────────────────────────────────────────────
+const SUPA_URL  = process.env.REACT_APP_SUPABASE_URL  || ""
+const SUPA_KEY  = process.env.REACT_APP_SUPABASE_ANON_KEY || ""
+const supabase  = SUPA_URL && SUPA_KEY ? createClient(SUPA_URL, SUPA_KEY) : null
 
 // ─── API ──────────────────────────────────────────────────────────────────────
 const API   = "https://api.anthropic.com/v1/messages"
 const MODEL = "claude-sonnet-4-6"
 const pause = ms => new Promise(r => setTimeout(r, ms))
-
-// API key — stored at module level and updated from UI
 let _key = ""
 
 async function askClaude(messages, system = "", maxTokens = 2000) {
@@ -14,25 +18,17 @@ async function askClaude(messages, system = "", maxTokens = 2000) {
     "anthropic-version": "2023-06-01",
     "anthropic-dangerous-direct-browser-access": "true"
   }
-  // Only add key header if we have one
   if (_key) headers["x-api-key"] = _key
-
   const res = await fetch(API, {
     method: "POST",
     headers,
     body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, system, messages })
   })
-
-  // Show HTTP status in error if not OK
   if (!res.ok) {
-    let errMsg = `HTTP ${res.status}`
-    try {
-      const errBody = await res.json()
-      errMsg = `HTTP ${res.status}: ${errBody?.error?.message || JSON.stringify(errBody?.error) || res.statusText}`
-    } catch {}
-    throw new Error(errMsg)
+    let msg = `HTTP ${res.status}`
+    try { const b = await res.json(); msg = `HTTP ${res.status}: ${b?.error?.message || res.statusText}` } catch {}
+    throw new Error(msg)
   }
-
   const d = await res.json()
   if (d.error) throw new Error(d.error.message || JSON.stringify(d.error))
   return d.content?.[0]?.text ?? ""
@@ -60,11 +56,13 @@ async function correctOrientation(file) {
         while (o < v.byteLength) {
           const mk = v.getUint16(o); o += 2
           if (mk === 0xFFE1) {
-            if (v.getUint32(o+2) !== 0x45786966) { resolve(1); return }
-            const le = v.getUint16(o+8) === 0x4949
-            const ifd = o+8+v.getUint32(o+12,le)
-            const n = v.getUint16(ifd,le)
-            for (let i=0;i<n;i++) if (v.getUint16(ifd+2+i*12,le)===0x0112) { resolve(v.getUint16(ifd+2+i*12+8,le)); return }
+            if (v.getUint32(o + 2) !== 0x45786966) { resolve(1); return }
+            const le = v.getUint16(o + 8) === 0x4949
+            const ifd = o + 8 + v.getUint32(o + 12, le)
+            const n = v.getUint16(ifd, le)
+            for (let i = 0; i < n; i++) {
+              if (v.getUint16(ifd + 2 + i * 12, le) === 0x0112) { resolve(v.getUint16(ifd + 2 + i * 12 + 8, le)); return }
+            }
             resolve(1); return
           }
           if ((mk & 0xFF00) !== 0xFF00) break
@@ -74,37 +72,36 @@ async function correctOrientation(file) {
       resolve(1)
     }
     fr.onerror = () => resolve(1)
-    fr.readAsArrayBuffer(file.slice(0,65536))
+    fr.readAsArrayBuffer(file.slice(0, 65536))
   })
   if (orient <= 1) return file
   return new Promise(resolve => {
     const url = URL.createObjectURL(file)
     const img = new Image()
     img.onload = () => {
-      const [w,h] = [img.naturalWidth, img.naturalHeight]
+      const [w, h] = [img.naturalWidth, img.naturalHeight]
       const c = document.createElement("canvas")
       const ctx = c.getContext("2d")
-      if (orient>=5){c.width=h;c.height=w}else{c.width=w;c.height=h}
+      if (orient >= 5) { c.width = h; c.height = w } else { c.width = w; c.height = h }
       ctx.save()
-      const T={2:[-1,0,0,1,w,0],3:[-1,0,0,-1,w,h],4:[1,0,0,-1,0,h],5:[0,1,1,0,0,0],6:[0,1,-1,0,h,0],7:[0,-1,-1,0,h,w],8:[0,-1,1,0,0,w]}[orient]
+      const T = { 2:[-1,0,0,1,w,0], 3:[-1,0,0,-1,w,h], 4:[1,0,0,-1,0,h], 5:[0,1,1,0,0,0], 6:[0,1,-1,0,h,0], 7:[0,-1,-1,0,h,w], 8:[0,-1,1,0,0,w] }[orient]
       if (T) ctx.transform(...T)
-      ctx.drawImage(img,0,0); ctx.restore()
+      ctx.drawImage(img, 0, 0); ctx.restore()
       URL.revokeObjectURL(url)
-      c.toBlob(b=>resolve(new File([b],file.name,{type:"image/jpeg"})),"image/jpeg",0.92)
+      c.toBlob(b => resolve(new File([b], file.name, { type: "image/jpeg" })), "image/jpeg", 0.92)
     }
-    img.onerror=()=>{URL.revokeObjectURL(url);resolve(file)}
-    img.src=url
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file) }
+    img.src = url
   })
 }
 
 function safeJSON(raw) {
-  let s = raw.replace(/```[a-z]*\n?/gi,"").replace(/```/g,"").trim()
-  const fb = s.indexOf("{"); if (fb>0) s=s.slice(fb)
+  let s = raw.replace(/```[a-z]*\n?/gi, "").replace(/```/g, "").trim()
+  const fb = s.indexOf("{"); if (fb > 0) s = s.slice(fb)
   try { return JSON.parse(s) } catch {}
   try {
-    let t=s
-    let diff=(t.match(/[\[{]/g)||[]).length-(t.match(/[\]}]/g)||[]).length
-    while(diff>0){const la=t.lastIndexOf("["),lo=t.lastIndexOf("{");t+=(la>lo?"]":"}");diff--}
+    let t = s, diff = (t.match(/[\[{]/g)||[]).length - (t.match(/[\]}]/g)||[]).length
+    while (diff > 0) { t += t.lastIndexOf("[") > t.lastIndexOf("{") ? "]" : "}"; diff-- }
     return JSON.parse(t)
   } catch {}
   return null
@@ -112,107 +109,149 @@ function safeJSON(raw) {
 
 // ─── SCORING ──────────────────────────────────────────────────────────────────
 function calcAccuracy(expected, spoken) {
-  const norm = s=>s.toLowerCase().replace(/[^a-z0-9\s]/g,"").trim().split(/\s+/).filter(Boolean)
-  const exp=norm(expected), spk=norm(spoken)
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9\s]/g, "").trim().split(/\s+/).filter(Boolean)
+  const exp = norm(expected), spk = norm(spoken)
   if (!exp.length) return 100
-  let hits=0; const used=new Set()
-  for (const w of spk){const i=exp.findIndex((e,j)=>e===w&&!used.has(j));if(i>=0){hits++;used.add(i)}}
-  return Math.round((hits/exp.length)*100)
+  let hits = 0; const used = new Set()
+  for (const w of spk) { const i = exp.findIndex((e, j) => e === w && !used.has(j)); if (i >= 0) { hits++; used.add(i) } }
+  return Math.round((hits / exp.length) * 100)
 }
 
 function diffTokens(expected, spoken) {
-  const norm=s=>s.toLowerCase().replace(/[^a-z0-9]/g,"")
-  const spk=spoken.split(/\s+/).map(norm); const used=new Set()
-  return expected.split(/(\s+)/).map(tok=>{
-    if(/^\s+$/.test(tok)) return{sp:true,text:tok}
-    const j=spk.findIndex((w,k)=>w===norm(tok)&&!used.has(k))
-    if(j>=0){used.add(j);return{ok:true,text:tok}}
-    return{ok:false,text:tok}
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, "")
+  const spk = spoken.split(/\s+/).map(norm); const used = new Set()
+  return expected.split(/(\s+)/).map(tok => {
+    if (/^\s+$/.test(tok)) return { sp: true, text: tok }
+    const j = spk.findIndex((w, k) => w === norm(tok) && !used.has(k))
+    if (j >= 0) { used.add(j); return { ok: true, text: tok } }
+    return { ok: false, text: tok }
   })
 }
 
-const MEDALS={
-  gold:  {emoji:"🥇",label:"Gold — Word Perfect!",  color:"#D97706"},
-  silver:{emoji:"🥈",label:"Silver — Excellent!",   color:"#6B7280"},
-  bronze:{emoji:"🥉",label:"Bronze — Good work!",   color:"#92400E"},
-  none:  {emoji:"🎭",label:"Keep rehearsing!",       color:"#6B7280"}
+const MEDALS = {
+  gold:   { emoji: "🥇", label: "Gold — Word Perfect!",  color: "#D97706" },
+  silver: { emoji: "🥈", label: "Silver — Excellent!",   color: "#6B7280" },
+  bronze: { emoji: "🥉", label: "Bronze — Good work!",   color: "#92400E" },
+  none:   { emoji: "🎭", label: "Keep rehearsing!",       color: "#6B7280" }
 }
-function scoreMedal(results){
-  if(!results.length) return{medal:"gold",accuracy:100,prompts:0}
-  const avg=Math.round(results.reduce((s,r)=>s+r.accuracy,0)/results.length)
-  const prompts=results.filter(r=>r.prompted).length
-  if(avg===100&&prompts===0)return{medal:"gold",accuracy:avg,prompts}
-  if(avg>=90&&prompts<=2)return{medal:"silver",accuracy:avg,prompts}
-  if(avg>=75)return{medal:"bronze",accuracy:avg,prompts}
-  return{medal:"none",accuracy:avg,prompts}
+
+function scoreMedal(results) {
+  if (!results.length) return { medal: "gold", accuracy: 100, prompts: 0 }
+  const avg = Math.round(results.reduce((s, r) => s + r.accuracy, 0) / results.length)
+  const prompts = results.filter(r => r.prompted).length
+  if (avg === 100 && prompts === 0) return { medal: "gold", accuracy: avg, prompts }
+  if (avg >= 90 && prompts <= 2)   return { medal: "silver", accuracy: avg, prompts }
+  if (avg >= 75)                    return { medal: "bronze", accuracy: avg, prompts }
+  return { medal: "none", accuracy: avg, prompts }
+}
+
+// ─── ELAPSED TIMER ────────────────────────────────────────────────────────────
+function ElapsedTimer({ running }) {
+  const [secs, setSecs] = useState(0)
+  const t0 = useRef(Date.now())
+  useEffect(() => {
+    if (!running) { setSecs(0); t0.current = Date.now(); return }
+    t0.current = Date.now()
+    const iv = setInterval(() => setSecs(Math.floor((Date.now() - t0.current) / 1000)), 1000)
+    return () => clearInterval(iv)
+  }, [running])
+  if (!running || secs < 5) return null
+  const m = Math.floor(secs / 60), s = secs % 60
+  return <span className="elapsed">{m > 0 ? `${m}m ` : ""}{s}s — still working…</span>
 }
 
 // ─── DROP ZONE ────────────────────────────────────────────────────────────────
-function DropZone({onProcess}){
-  const [files,setFiles]=useState([])
-  const [drag,setDrag]=useState(false)
-  const ref=useRef(null)
-  const accept=fs=>Array.from(fs).filter(f=>f.type.startsWith("image/")||f.type==="application/pdf")
-  return(
+function DropZone({ onProcess }) {
+  const [files, setFiles] = useState([])
+  const [drag, setDrag] = useState(false)
+  const ref = useRef(null)
+  const accept = fs => Array.from(fs).filter(f => f.type.startsWith("image/") || f.type === "application/pdf")
+  return (
     <div className="dz-wrap">
-      <div className={`dz${drag?" drag":""}${files.length?" filled":""}`}
-        onDragOver={e=>{e.preventDefault();setDrag(true)}}
-        onDragLeave={()=>setDrag(false)}
-        onDrop={e=>{e.preventDefault();setDrag(false);setFiles(accept(e.dataTransfer.files))}}
-        onClick={()=>ref.current?.click()}>
-        <input ref={ref} type="file" multiple accept="image/*,.pdf" hidden
-          onChange={e=>setFiles(accept(e.target.files))}/>
-        {!files.length?<>
+      <div className={`dz${drag ? " drag" : ""}${files.length ? " filled" : ""}`}
+        onDragOver={e => { e.preventDefault(); setDrag(true) }}
+        onDragLeave={() => setDrag(false)}
+        onDrop={e => { e.preventDefault(); setDrag(false); setFiles(accept(e.dataTransfer.files)) }}
+        onClick={() => ref.current?.click()}>
+        <input ref={ref} type="file" multiple accept="image/*,.pdf" hidden onChange={e => setFiles(accept(e.target.files))} />
+        {!files.length ? <>
           <div className="dz-ico">📄</div>
           <p className="dz-txt">Drop your script pages here</p>
           <p className="dz-sub">PDF · JPG · PNG · HEIC — multiple pages OK</p>
-        </>:<>
+        </> : <>
           <div className="dz-ico">✅</div>
-          <p className="dz-txt">{files.length} file{files.length>1?"s":""} ready</p>
-          <ul className="dz-list">{files.slice(0,5).map((f,i)=><li key={i}>{f.name}</li>)}{files.length>5&&<li>…and {files.length-5} more</li>}</ul>
+          <p className="dz-txt">{files.length} file{files.length > 1 ? "s" : ""} ready</p>
+          <ul className="dz-list">{files.slice(0, 5).map((f, i) => <li key={i}>{f.name}</li>)}{files.length > 5 && <li>…and {files.length - 5} more</li>}</ul>
         </>}
       </div>
-      {files.length>0&&<button className="go-btn" onClick={()=>onProcess(files)}>📖 Read My Script</button>}
+      {files.length > 0 && <button className="go-btn" onClick={() => onProcess(files)}>📖 Read My Script</button>}
     </div>
   )
 }
 
-// ─── ELAPSED TIMER ────────────────────────────────────────────────────────────
-function ElapsedTimer({running}){
-  const [secs,setSecs]=useState(0)
-  const startRef=useRef(Date.now())
-  useEffect(()=>{
-    if(!running){setSecs(0);startRef.current=Date.now();return}
-    startRef.current=Date.now()
-    const iv=setInterval(()=>setSecs(Math.floor((Date.now()-startRef.current)/1000)),1000)
-    return()=>clearInterval(iv)
-  },[running])
-  if(!running||secs<3)return null
-  const m=Math.floor(secs/60), s=secs%60
-  return<span className="elapsed">{m>0?`${m}m `:""}{s}s elapsed — still working…</span>
-}
-
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
-export default function StagePrompt(){
-  const [screen,   setScreen]   = useState("upload")
+export default function StagePrompt() {
+  // ── Navigation ───────────────────────────────────────────────────────────
+  const [screen, setScreen] = useState(supabase ? "auth" : "upload")
+
+  // ── API Key ───────────────────────────────────────────────────────────────
   const [apiKey,   setApiKey]   = useState("")
   const [keyReady, setKeyReady] = useState(false)
+
+  // ── Auth ──────────────────────────────────────────────────────────────────
+  const [user,        setUser]        = useState(null)
+  const [authMode,    setAuthMode]    = useState("login")
+  const [authEmail,   setAuthEmail]   = useState("")
+  const [authPass,    setAuthPass]    = useState("")
+  const [authErr,     setAuthErr]     = useState("")
+  const [authLoading, setAuthLoading] = useState(false)
+
+  // ── Library ───────────────────────────────────────────────────────────────
+  const [library,    setLibrary]    = useState([])
+  const [libLoading, setLibLoading] = useState(false)
+  const [savedId,    setSavedId]    = useState(null)  // id of currently loaded script
+
+  // ── Processing ────────────────────────────────────────────────────────────
   const [procStep, setProcStep] = useState("")
   const [procProg, setProcProg] = useState(0)
   const [procErr,  setProcErr]  = useState("")
-  const [script,   setScript]   = useState(null)
-  const [voices,   setVoices]   = useState([])
 
-  // Multiple roles: myRoles is a Set of character names the user plays
-  const [myRoles,    setMyRoles]    = useState(new Set())
-  const [selScene,   setSelScene]   = useState("")
-  const [recordings, setRecordings] = useState({})
-  const [recFor,     setRecFor]     = useState(null)
-  const [isRec,      setIsRec]      = useState(false)
-  const [skipNoChar, setSkipNoChar] = useState(false)
-  const mediaRef=useRef(null); const chunksRef=useRef([])
+  // ── Script data ───────────────────────────────────────────────────────────
+  const [script, setScript] = useState(null)
 
-  // Review
+  // ── Voices ────────────────────────────────────────────────────────────────
+  const [voices, setVoices] = useState([])
+  useEffect(() => {
+    const load = () => { const v = window.speechSynthesis?.getVoices() || []; if (v.length) setVoices(v) }
+    load()
+    if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = load
+    return () => { if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = null }
+  }, [])
+  const pickVoice = useCallback((type, idx) => {
+    if (!voices.length) return null
+    const fem = ["samantha","victoria","karen","moira","fiona","tessa","allison","ava","zira","hazel"]
+    const mal = ["daniel","alex","fred","george","james","david","mark","thomas","lee","gordon"]
+    const pool = voices.filter(v => { const n = v.name.toLowerCase(); if (type==="female") return n.includes("female")||fem.some(x=>n.includes(x)); if (type==="male") return n.includes("male")||mal.some(x=>n.includes(x)); return true })
+    const list = pool.length ? pool : voices
+    return list[idx % list.length] || voices[0] || null
+  }, [voices])
+
+  // ── My roles (multiple characters) ───────────────────────────────────────
+  const [myRoles, setMyRoles] = useState(new Set())
+  const myChars = [...myRoles]
+  const toggleMyRole = name => setMyRoles(prev => { const n = new Set(prev); n.has(name) ? n.delete(name) : n.add(name); return n })
+
+  // ── Setup ─────────────────────────────────────────────────────────────────
+  const [selScene,    setSelScene]    = useState("")
+  const [recordings,  setRecordings]  = useState({})
+  const [recFor,      setRecFor]      = useState(null)
+  const [isRec,       setIsRec]       = useState(false)
+  const [skipNoChar,  setSkipNoChar]  = useState(false)
+  const [hideStageDir,setHideStageDir]= useState(false)
+  const mediaRef  = useRef(null)
+  const chunksRef = useRef([])
+
+  // ── Review ────────────────────────────────────────────────────────────────
   const [reviewMode,   setReviewMode]   = useState("scroll")
   const [reviewFilter, setReviewFilter] = useState("flagged")
   const [stepIdx,      setStepIdx]      = useState(0)
@@ -220,488 +259,522 @@ export default function StagePrompt(){
   const [editText,     setEditText]     = useState("")
   const [editChar,     setEditChar]     = useState("")
   const [isVoiceCorr,  setIsVoiceCorr]  = useState(false)
-  const dragRef = useRef(null) // {si, li} of the line being dragged
+  const dragRef = useRef(null)
 
-  // Rehearsal
-  const [hideStageDir, setHideStageDir] = useState(false)
+  // ── Rehearsal ─────────────────────────────────────────────────────────────
   const [phase,       setPhase]       = useState("idle")
   const [curIdx,      setCurIdx]      = useState(0)
   const [lineResults, setLineResults] = useState([])
   const [curSpoken,   setCurSpoken]   = useState("")
   const [curAccuracy, setCurAccuracy] = useState(null)
   const [promptHint,  setPromptHint]  = useState("")
-  const rehearsalOn=useRef(false); const promptedRef=useRef(false)
-  const sceneRef=useRef({lines:[],myChars:[]})
+  const rehearsalOn = useRef(false)
+  const promptedRef = useRef(false)
+  const sceneRef    = useRef({ lines: [], myChars: [] })
 
-  const [history,setHistory]=useState([])
-  const [wModal, setWModal] =useState(null)
-  const [wResult,setWResult]=useState("")
-  const [wLoad,  setWLoad]  =useState(false)
+  // ── History & word modal ──────────────────────────────────────────────────
+  const [history, setHistory] = useState([])
+  const [wModal,  setWModal]  = useState(null)
+  const [wResult, setWResult] = useState("")
+  const [wLoad,   setWLoad]   = useState(false)
 
-  const myChars = [...myRoles]
+  // ── Auth & Library ────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!supabase) return
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) { setUser(session.user); setScreen("library") }
+    })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
+      if (session?.user) { setUser(session.user); if (screen === "auth") setScreen("library") }
+      else { setUser(null); setScreen("auth") }
+    })
+    return () => subscription.unsubscribe()
+  }, [])
 
-  // ── Voices ────────────────────────────────────────────────────────────────
-  useEffect(()=>{
-    const load=()=>{const v=window.speechSynthesis?.getVoices()||[];if(v.length)setVoices(v)}
-    load(); if(window.speechSynthesis)window.speechSynthesis.onvoiceschanged=load
-    return()=>{if(window.speechSynthesis)window.speechSynthesis.onvoiceschanged=null}
-  },[])
+  const loadLibrary = useCallback(async () => {
+    if (!supabase || !user) return
+    setLibLoading(true)
+    const { data } = await supabase.from("scripts").select("id,title,created_at,updated_at").eq("user_id", user.id).order("updated_at", { ascending: false })
+    setLibrary(data || [])
+    setLibLoading(false)
+  }, [user])
 
-  const pickVoice=useCallback((type,idx)=>{
-    if(!voices.length)return null
-    const fem=["samantha","victoria","karen","moira","fiona","tessa","allison","ava","zira","hazel"]
-    const mal=["daniel","alex","fred","george","james","david","mark","thomas","lee","gordon"]
-    const pool=voices.filter(v=>{const n=v.name.toLowerCase();if(type==="female")return n.includes("female")||fem.some(x=>n.includes(x));if(type==="male")return n.includes("male")||mal.some(x=>n.includes(x));return true})
-    const list=pool.length?pool:voices
-    return list[idx%list.length]||voices[0]||null
-  },[voices])
+  useEffect(() => { if (screen === "library") loadLibrary() }, [screen, loadLibrary])
 
-  const toggleMyRole=name=>setMyRoles(prev=>{const n=new Set(prev);n.has(name)?n.delete(name):n.add(name);return n})
+  const saveScript = useCallback(async (scriptData) => {
+    if (!supabase || !user) return null
+    try {
+      if (savedId) {
+        await supabase.from("scripts").update({ title: scriptData.title, script_data: scriptData, updated_at: new Date().toISOString() }).eq("id", savedId)
+        return savedId
+      } else {
+        const { data } = await supabase.from("scripts").insert({ user_id: user.id, title: scriptData.title, script_data: scriptData }).select("id").single()
+        if (data?.id) { setSavedId(data.id); return data.id }
+      }
+    } catch (e) { console.error("Save error:", e) }
+    return null
+  }, [supabase, user, savedId])
+
+  const loadScript = useCallback(async (id) => {
+    if (!supabase) return
+    const { data } = await supabase.from("scripts").select("script_data").eq("id", id).single()
+    if (data?.script_data) {
+      setScript(data.script_data)
+      setSavedId(id)
+      setMyRoles(new Set())
+      setSelScene("")
+      setScreen("setup")
+    }
+  }, [])
+
+  const deleteScript = useCallback(async (id) => {
+    if (!supabase) return
+    await supabase.from("scripts").delete().eq("id", id)
+    setLibrary(l => l.filter(s => s.id !== id))
+    if (savedId === id) { setSavedId(null); setScript(null) }
+  }, [savedId])
+
+  const signOut = async () => {
+    await supabase?.auth.signOut()
+    setUser(null); setScript(null); setSavedId(null); setMyRoles(new Set()); setScreen("auth")
+  }
+
+  const handleAuth = async () => {
+    setAuthErr(""); setAuthLoading(true)
+    try {
+      if (authMode === "signup") {
+        const { error } = await supabase.auth.signUp({ email: authEmail, password: authPass })
+        if (error) throw error
+        setAuthErr("✅ Check your email to confirm your account, then come back and log in.")
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email: authEmail, password: authPass })
+        if (error) throw error
+      }
+    } catch(e) { setAuthErr(e.message) }
+    setAuthLoading(false)
+  }
 
   // ── STT ───────────────────────────────────────────────────────────────────
-  const listenOnce=()=>new Promise(resolve=>{
-    const SR=window.SpeechRecognition||window.webkitSpeechRecognition
-    if(!SR){resolve("");return}
-    const rec=new SR(); rec.continuous=false; rec.interimResults=true; rec.lang="en-GB"
-    let final=""; let done=false
-    const finish=v=>{if(!done){done=true;resolve(v)}}
-    rec.onresult=e=>{
-      let interim=""
-      for(let i=e.resultIndex;i<e.results.length;i++){if(e.results[i].isFinal)final+=e.results[i][0].transcript+" ";else interim+=e.results[i][0].transcript}
-      setCurSpoken(final+interim)
-      if(e.results[e.results.length-1].isFinal)finish(final.trim())
+  const listenOnce = () => new Promise(resolve => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) { resolve(""); return }
+    const rec = new SR(); rec.continuous = false; rec.interimResults = true; rec.lang = "en-GB"
+    let final = ""; let done = false
+    const finish = v => { if (!done) { done = true; resolve(v) } }
+    rec.onresult = e => {
+      let interim = ""
+      for (let i = e.resultIndex; i < e.results.length; i++) { if (e.results[i].isFinal) final += e.results[i][0].transcript + " "; else interim += e.results[i][0].transcript }
+      setCurSpoken(final + interim)
+      if (e.results[e.results.length - 1].isFinal) finish(final.trim())
     }
-    rec.onerror=()=>finish(final.trim()); rec.onend=()=>finish(final.trim())
-    try{rec.start()}catch{finish("")}
+    rec.onerror = () => finish(final.trim()); rec.onend = () => finish(final.trim())
+    try { rec.start() } catch { finish("") }
   })
 
   // ── PROCESS FILES ─────────────────────────────────────────────────────────
-  const processFiles=async(files)=>{
+  const processFiles = async files => {
     setScreen("processing"); setProcProg(5); setProcErr("")
+    const images = [], pdfs = []
+    for (const f of files) { if (f.type === "application/pdf") pdfs.push(f); else images.push(f) }
 
-    const images=[], pdfs=[]
-    for(const f of files){if(f.type==="application/pdf")pdfs.push(f);else images.push(f)}
-
-    // Step 1: orientation
+    // Step 1: Fix image orientation
     setProcStep("Checking page orientation…")
-    const corrected=[]
-    for(let i=0;i<images.length;i++){
-      setProcProg(5+Math.round((i/Math.max(images.length,1))*10))
+    const corrected = []
+    for (let i = 0; i < images.length; i++) {
+      setProcProg(5 + Math.round((i / Math.max(images.length, 1)) * 10))
       corrected.push(await correctOrientation(images[i]))
     }
     setProcProg(15)
 
     // Step 2: OCR — batch images 8 at a time
-    const rawTexts=[]
-    const BATCH=8
-    for(let b=0;b<corrected.length;b+=BATCH){
-      const batch=corrected.slice(b,b+BATCH)
-      const ps=b+1,pe=Math.min(b+BATCH,corrected.length)
-      setProcStep(corrected.length===1?"Reading script page…":`Reading pages ${ps}–${pe} of ${corrected.length}…`)
-      setProcProg(15+Math.round((b/Math.max(corrected.length,1))*28))
-      const content=[]
-      for(let i=0;i<batch.length;i++){
-        content.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:await toBase64(batch[i])}})
-        content.push({type:"text",text:`[Page ${ps+i}]`})
+    const rawTexts = []
+    const BATCH = 8
+    for (let b = 0; b < corrected.length; b += BATCH) {
+      const batch = corrected.slice(b, b + BATCH)
+      const ps = b + 1, pe = Math.min(b + BATCH, corrected.length)
+      setProcStep(corrected.length === 1 ? "Reading script page…" : `Reading pages ${ps}–${pe} of ${corrected.length}…`)
+      setProcProg(15 + Math.round((b / Math.max(corrected.length, 1)) * 28))
+      const content = []
+      for (let i = 0; i < batch.length; i++) {
+        content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: await toBase64(batch[i]) } })
+        content.push({ type: "text", text: `[Page ${ps + i}]` })
       }
-      content.push({type:"text",text:`Extract ALL text from these ${batch.length} theatre play script page(s). Label each === PAGE N ===. Preserve: character names (CAPS on own line), stage directions (in brackets/parens), act/scene headings, every word of every line. Do not skip or summarise anything. Pages may be slightly rotated — read them regardless.`})
-      try{rawTexts.push(await askClaude([{role:"user",content}],"Specialist script OCR. Extract every word faithfully.",Math.min(3000*batch.length,16000)))}
-      catch(e){rawTexts.push(`[Pages ${ps}-${pe} error: ${e.message}]`)}
-      await pause(3000) // stay within rate limits
-    }
-    for(let i=0;i<pdfs.length;i++){
-      setProcStep(`Reading PDF${pdfs.length>1?` ${i+1}/${pdfs.length}`:""}…`)
-      setProcProg(44+Math.round((i/Math.max(pdfs.length,1))*12))
-      try{rawTexts.push(await askClaude([{role:"user",content:[
-        {type:"document",source:{type:"base64",media_type:"application/pdf",data:await toBase64(pdfs[i])}},
-        {type:"text",text:"Extract ALL text from this theatre play script PDF. Preserve character names (CAPS before their lines), stage directions, act/scene headings, all dialogue verbatim. Do not skip or summarise anything."}
-      ]}],"Specialist script OCR.",16000))}
-      catch(e){rawTexts.push(`[PDF error: ${e.message}]`)}
-      await pause(3000) // stay within rate limits
+      content.push({ type: "text", text: `Extract ALL text from these ${batch.length} theatre play script page(s). Label each === PAGE N ===. Preserve: character names (CAPS on own line), stage directions (brackets/parens), act/scene headings, every word of dialogue. Pages may be slightly rotated — read them regardless. Do not skip or summarise anything.` })
+      try { rawTexts.push(await askClaude([{ role: "user", content }], "Specialist script OCR. Extract every word faithfully.", Math.min(3000 * batch.length, 8000))); await pause(3000) }
+      catch (e) { rawTexts.push(`[Pages ${ps}-${pe} error: ${e.message}]`) }
     }
 
-    const fullText=rawTexts.join("\n\n").trim()
-    if(!fullText){
-      setProcErr("No text could be extracted. Please try a clearer image or a digital PDF."); return
-    }
+    // Step 3: PDFs — 4-pass extraction for scripts up to 150 pages
+    for (let i = 0; i < pdfs.length; i++) {
+      setProcStep(`Reading PDF${pdfs.length > 1 ? ` ${i + 1}/${pdfs.length}` : ""} — this may take several minutes for long scripts…`)
+      setProcProg(44 + Math.round((i / Math.max(pdfs.length, 1)) * 12))
+      const b64 = await toBase64(pdfs[i])
+      const pdfMsg = txt => [{ role:"user", content:[
+        { type:"document", source:{ type:"base64", media_type:"application/pdf", data:b64 } },
+        { type:"text", text:txt }
+      ]}]
 
-    // Sanity check — show first 120 chars of extracted text so we can verify it's real
-    const preview = fullText.slice(0,120).replace(/\n/g," ")
-    setProcStep(`Text extracted — "${preview}…"`)
-    setProcProg(57)
-    await pause(2500) // pause so user can see the preview
+      const passes = [
+        "Extract the FIRST QUARTER of this theatre play script PDF — from the very beginning up to roughly page 25. Preserve character names (in CAPS on their own line), stage directions, act/scene headings, and all dialogue verbatim. Do not summarise or skip anything.",
+        null, // filled in dynamically
+        null,
+        null
+      ]
+      let fullPdfText = ""
 
-    // Step 3: Multi-pass character & heading extraction (handles very long scripts)
-    setProcStep("Identifying all characters and scenes across the whole script…"); setProcProg(58)
-    let meta={title:"Untitled Play",characters:[],sceneHeadings:[]}
-    try{
-      const mRawA=await askClaude([{role:"user",content:
-        `Read this play script and find: (1) the play title, (2) EVERY character who speaks, (3) ALL section headings (Prologue, Scene 1 … Scene N, Epilogue etc.)
-Return ONLY valid JSON, no markdown:
-{"title":"Play Title","characters":["NAME1","NAME2"],"sceneHeadings":["Prologue","Scene 1"]}
-Read the WHOLE text. Do not stop early.
-SCRIPT (part 1):\n${fullText.slice(0,40000)}`
-      }],"Theatre analyst. Return only valid compact JSON.",3000)
-      const mA=safeJSON(mRawA); if(mA&&Array.isArray(mA.characters))meta=mA
-      if(fullText.length>40000){
-        setProcStep("Scanning remainder of script for additional characters…"); setProcProg(61)
-        const mRawB=await askClaude([{role:"user",content:
-          `From this second portion of the same play, find any ADDITIONAL speaking characters not in [${meta.characters.join(", ")}] and any additional scene headings.
-Return ONLY JSON: {"additionalCharacters":["NAME3"],"additionalHeadings":["Scene 7"]}
-SCRIPT (part 2):\n${fullText.slice(40000,90000)}`
-        }],"Theatre analyst. Return only valid compact JSON.",2000)
-        const mB=safeJSON(mRawB)
-        if(mB){
-          if(Array.isArray(mB.additionalCharacters))meta.characters=[...new Set([...meta.characters,...mB.additionalCharacters])]
-          if(Array.isArray(mB.additionalHeadings))meta.sceneHeadings=[...new Set([...meta.sceneHeadings,...mB.additionalHeadings])]
-        }
-      }
-      if(fullText.length>90000){
-        const mRawC=await askClaude([{role:"user",content:
-          `Third portion — find any additional characters not in [${meta.characters.join(", ")}] and additional scene headings not in [${meta.sceneHeadings.join(", ")}].
-Return ONLY JSON: {"additionalCharacters":[],"additionalHeadings":[]}
-SCRIPT (part 3):\n${fullText.slice(90000,140000)}`
-        }],"Theatre analyst. Return only valid compact JSON.",1500)
-        const mC=safeJSON(mRawC)
-        if(mC){
-          if(Array.isArray(mC.additionalCharacters))meta.characters=[...new Set([...meta.characters,...mC.additionalCharacters])]
-          if(Array.isArray(mC.additionalHeadings))meta.sceneHeadings=[...new Set([...meta.sceneHeadings,...mC.additionalHeadings])]
-        }
-      }
-    }catch{}
-
-    // Step 4: Scene-aware chunking — FIXED to never create runaway chunks
-    setProcStep("Splitting script into sections…"); setProcProg(64)
-    const SCENE_RE=/(?:^|\n)((?:PROLOGUE|EPILOGUE|(?:ACT\s*\d+[\s,]*)?SCENE\s*\d+|Scene\s+\d+|Prologue|Epilogue)[^\n]*)/gi
-    const hmatches=[...fullText.matchAll(SCENE_RE)]
-
-    // Much larger chunk size — fewer API calls, much faster
-    const MAX_CHUNK = 8000   // ~2000 tokens — safe within 30k/min rate limit
-    const MIN_ADVANCE = 5000 // always advance at least this much
-    let textChunks = []
-
-    if(hmatches.length >= 2){
-      // Split at scene boundaries
-      if(hmatches[0].index > 200){
-        textChunks.push({label:"Opening/Prologue", text:fullText.slice(0, Math.min(hmatches[0].index + 500, MAX_CHUNK)), startScene: meta.sceneHeadings[0]||"Prologue"})
-      }
-      for(let i=0;i<hmatches.length;i++){
-        const label = hmatches[i][1].trim()
-        const start = hmatches[i].index
-        const end   = i+1<hmatches.length ? hmatches[i+1].index : fullText.length
-        const sec   = fullText.slice(Math.max(0,start-200), end)
-        if(sec.length > MAX_CHUNK){
-          // Sub-chunk long scenes — SAFE loop with guaranteed advance
-          let pos=0, sub=0
-          while(pos < sec.length){
-            const target = Math.min(pos + MAX_CHUNK, sec.length)
-            // Try to cut at newline but always advance at least MIN_ADVANCE
-            const nlPos  = sec.lastIndexOf("\n", target)
-            const cut    = (nlPos > pos + MIN_ADVANCE) ? nlPos : target
-            textChunks.push({label:`${label}${sub>0?` (part ${sub+1})`:""}`, text:sec.slice(pos,cut), startScene:label})
-            pos = cut  // no overlap — scene context passed via startScene field
-            sub++
-          }
+      for (let p = 0; p < 4; p++) {
+        setProcStep(`Reading PDF — section ${p+1} of 4…`)
+        await pause(6000)
+        let prompt
+        if (p === 0) {
+          prompt = passes[0]
         } else {
-          textChunks.push({label, text:sec, startScene:label})
+          const lastFew = fullPdfText.trim().split("\n").filter(l=>l.trim()).slice(-8).join("\n")
+          const quarter = p===1?"second quarter (roughly pages 26–50)":p===2?"third quarter (roughly pages 51–75)":"final quarter (roughly pages 76 to the end)"
+          prompt = `This is a theatre play script PDF. I have already extracted up to:\n\n"${lastFew}"\n\nPlease extract the ${quarter} — all text that appears AFTER the above excerpt. Include every scene, every line of dialogue, every stage direction. If there is genuinely no more content after the above point, reply only: DONE`
         }
+        try {
+          const result = await askClaude(pdfMsg(prompt), "Specialist script OCR. Extract all text faithfully.", 16000)
+          if (!result || result.trim().length < 50 || result.trim().toUpperCase().startsWith("DONE")) break
+          // Check for duplicate content — stop if we're looping
+          if (fullPdfText.length > 100 && fullPdfText.includes(result.trim().slice(0, 60))) break
+          fullPdfText += (fullPdfText ? "\n\n" : "") + result
+          rawTexts.push(result)
+        } catch(e) {
+          rawTexts.push(`[PDF pass ${p+1} error: ${e.message}]`)
+          await pause(8000) // longer wait after rate limit error
+          break
+        }
+      }
+    }
+
+    const fullText = rawTexts.join("\n\n").trim()
+    if (!fullText) { setProcErr("No text could be extracted. Please try a clearer image or digital PDF."); return }
+
+    // Preview of extracted text
+    setProcStep(`Extracted: "${fullText.slice(0, 100).replace(/\n/g, " ")}…"`); setProcProg(57)
+    await pause(2000)
+
+    // Step 4: Multi-pass character & heading extraction
+    setProcStep("Identifying all characters and scenes…"); setProcProg(59)
+    let meta = { title: "Untitled Play", characters: [], sceneHeadings: [] }
+    try {
+      const mRaw = await askClaude([{ role: "user", content: `Read this play script and find: (1) the play title, (2) EVERY character who speaks, (3) ALL section headings (Prologue, Scene 1 … Scene N, Epilogue etc.)\nReturn ONLY valid JSON:\n{"title":"Play Title","characters":["NAME1","NAME2"],"sceneHeadings":["Prologue","Scene 1"]}\nSCRIPT:\n${fullText.slice(0, 40000)}` }], "Theatre analyst. Return only valid compact JSON.", 3000); await pause(3000)
+      const m = safeJSON(mRaw); if (m && Array.isArray(m.characters) && m.characters.length > 0) meta = m
+    } catch {}
+    if (fullText.length > 40000) {
+      try {
+        setProcStep("Scanning for additional characters…"); setProcProg(61); await pause(500)
+        const mRaw2 = await askClaude([{ role: "user", content: `From this second portion of the same play, find any ADDITIONAL speaking characters not in [${meta.characters.join(", ")}] and any additional scene headings.\nReturn ONLY JSON: {"additionalCharacters":[],"additionalHeadings":[]}\nSCRIPT:\n${fullText.slice(40000, 90000)}` }], "Theatre analyst. Return only valid compact JSON.", 2000); await pause(3000)
+        const m2 = safeJSON(mRaw2)
+        if (m2) {
+          if (Array.isArray(m2.additionalCharacters)) meta.characters = [...new Set([...meta.characters, ...m2.additionalCharacters])]
+          if (Array.isArray(m2.additionalHeadings)) meta.sceneHeadings = [...new Set([...meta.sceneHeadings, ...m2.additionalHeadings])]
+        }
+      } catch {}
+    }
+
+    // Step 5: Chunked parsing with safe advance
+    setProcStep("Splitting script into sections…"); setProcProg(64)
+    const SCENE_RE = /(?:^|\n)((?:PROLOGUE|EPILOGUE|(?:ACT\s*\d+[\s,]*)?SCENE\s*\d+|Scene\s+\d+|Prologue|Epilogue)[^\n]*)/gi
+    const hmatches = [...fullText.matchAll(SCENE_RE)]
+    const MAX_CHUNK = 8000, MIN_ADV = 5000
+    let chunks = []
+    if (hmatches.length >= 2) {
+      if (hmatches[0].index > 200) chunks.push({ label: "Opening", text: fullText.slice(0, Math.min(hmatches[0].index + 300, MAX_CHUNK)), scene: meta.sceneHeadings[0] || "Prologue" })
+      for (let i = 0; i < hmatches.length; i++) {
+        const label = hmatches[i][1].trim(), start = hmatches[i].index, end = i + 1 < hmatches.length ? hmatches[i + 1].index : fullText.length
+        const sec = fullText.slice(Math.max(0, start - 200), end)
+        if (sec.length > MAX_CHUNK) {
+          let pos = 0, sub = 0
+          while (pos < sec.length) { const tgt = Math.min(pos + MAX_CHUNK, sec.length); const nl = sec.lastIndexOf("\n", tgt); const cut = nl > pos + MIN_ADV ? nl : tgt; chunks.push({ label: `${label}${sub > 0 ? ` (part ${sub + 1})` : ""}`, text: sec.slice(pos, cut), scene: label }); pos = cut; sub++ }
+        } else chunks.push({ label, text: sec, scene: label })
       }
     } else {
-      // No scene headings — fixed-size chunks with SAFE advance
-      const headings = meta.sceneHeadings.length>0 ? meta.sceneHeadings : ["Scene 1"]
-      let pos=0, ci=0
-      while(pos < fullText.length){
-        const target = Math.min(pos + MAX_CHUNK, fullText.length)
-        const nlPos  = fullText.lastIndexOf("\n", target)
-        const cut    = (nlPos > pos + MIN_ADVANCE) ? nlPos : target
-        textChunks.push({label:`Part ${ci+1}`, text:fullText.slice(pos,cut), startScene:headings[Math.min(ci,headings.length-1)]})
-        pos = cut
-        ci++
-      }
+      const hl = meta.sceneHeadings.length > 0 ? meta.sceneHeadings : ["Scene 1"]
+      let pos = 0, ci = 0
+      while (pos < fullText.length) { const tgt = Math.min(pos + MAX_CHUNK, fullText.length); const nl = fullText.lastIndexOf("\n", tgt); const cut = nl > pos + MIN_ADV ? nl : tgt; chunks.push({ label: `Part ${ci + 1}`, text: fullText.slice(pos, cut), scene: hl[Math.min(ci, hl.length - 1)] }); pos = cut; ci++ }
+    }
+    // Hard cap at 40 chunks
+    while (chunks.length > 40) {
+      let mi = 0; for (let i = 0; i < chunks.length - 1; i++) if (chunks[i].text.length < chunks[mi].text.length) mi = i
+      chunks.splice(mi, 2, { label: chunks[mi].label, text: chunks[mi].text + "\n" + chunks[mi + 1].text, scene: chunks[mi].scene })
     }
 
-    // Hard cap — a 150-page play at 8k chars/chunk needs at most ~25 chunks
-    if(textChunks.length > 40){
-      // Merge smallest adjacent chunks until we're under the cap
-      while(textChunks.length > 40){
-        let minIdx=0
-        for(let i=0;i<textChunks.length-1;i++){
-          if(textChunks[i].text.length < textChunks[minIdx].text.length) minIdx=i
-        }
-        const merged = {
-          label: textChunks[minIdx].label,
-          text:  textChunks[minIdx].text + "\n" + textChunks[minIdx+1].text,
-          startScene: textChunks[minIdx].startScene
-        }
-        textChunks.splice(minIdx, 2, merged)
-      }
+    const knownChars = meta.characters.join(", ") || "look for CAPITALISED names"
+    const knownScenes = meta.sceneHeadings.join(", ") || "Prologue, Scene 1 … Epilogue"
+    const allLines = []
+    for (let ci = 0; ci < chunks.length; ci++) {
+      const ch = chunks[ci]
+      setProcStep(`Parsing ${ch.label} — ${ci + 1} of ${chunks.length}…`)
+      setProcProg(64 + Math.round((ci / chunks.length) * 29))
+      try {
+        const pRaw = await askClaude([{ role: "user", content: `Parse this theatre play script section into JSON.\nKnown characters: ${knownChars}\nKnown sections: ${knownScenes}\nCurrent section: ${ch.scene}\n\nReturn ONLY this JSON (no markdown):\n{"lines":[{"character":"NAME","text":"exact dialogue","isStageDirection":false,"scene":"${ch.scene}","flagged":false},{"character":null,"text":"(Stage direction)","isStageDirection":true,"scene":"${ch.scene}","flagged":false}]}\n\nRULES:\n- Include EVERY spoken line including short ones ("Yes." "No!" "Help!")\n- Character name formats: NAME alone on a line, NAME., NAME:\n- Update "scene" field when a new heading appears\n- flagged:true ONLY for genuinely illegible text\n- DO NOT skip or omit any dialogue\n\nSCRIPT:\n${ch.text}` }], "Expert theatre script parser. Include every single line.", 7000)
+        const pd = safeJSON(pRaw)
+        if (pd && Array.isArray(pd.lines) && pd.lines.length > 0) allLines.push(...pd.lines.map(l => ({ ...l, _ci: ci })))
+        else allLines.push({ character: null, text: `[${ch.label} parse failed: ${pRaw.slice(0, 80)}]`, isStageDirection: true, scene: ch.scene, flagged: true, _ci: ci })
+      } catch (e) { allLines.push({ character: null, text: `[API error: ${ch.label} — ${e.message}]`, isStageDirection: true, scene: ch.scene, flagged: true, _ci: ci }) }
+      if (ci < chunks.length - 1) await pause(5000)
     }
 
-    const totalChunks=textChunks.length
-    const knownChars=meta.characters.join(", ")||"look for names in ALL CAPITALS"
-    const knownScenes=meta.sceneHeadings.join(", ")||"Prologue, Scene 1 ... Epilogue"
-    const allParsedLines=[]
-
-    for(let ci=0;ci<totalChunks;ci++){
-      const chunk=textChunks[ci]
-      setProcProg(64+Math.round((ci/totalChunks)*29))
-      setProcStep(`Parsing ${chunk.label} — ${ci+1} of ${totalChunks} sections…`)
-      try{
-        const pRaw=await askClaude([{role:"user",content:
-          `Parse this theatre play script section into JSON lines.
-Known characters: ${knownChars}
-Known sections: ${knownScenes}
-Current section: ${chunk.startScene}
-
-Return ONLY this JSON (no markdown):
-{"lines":[
-  {"character":"NAME","text":"exact dialogue","isStageDirection":false,"scene":"${chunk.startScene}","flagged":false},
-  {"character":null,"text":"(Stage direction)","isStageDirection":true,"scene":"${chunk.startScene}","flagged":false}
-]}
-
-RULES — failure to follow these means the actor cannot learn their lines:
-- Include EVERY spoken line, even single words ("Yes." "No!" "Help!")
-- Character name formats: NAME alone on a line, NAME., NAME: — all mean the same thing
-- Update "scene" field when a new heading appears in the text
-- flagged:true ONLY for genuinely illegible text
-- Default scene if none visible: "${chunk.startScene}"
-- DO NOT skip, omit or summarise any dialogue whatsoever
-
-SCRIPT SECTION:\n${chunk.text}`
-        }],"Expert theatre script parser. Include every single line. Never skip dialogue.",7000)
-        const pd=safeJSON(pRaw)
-        if(pd&&Array.isArray(pd.lines)&&pd.lines.length>0){
-          allParsedLines.push(...pd.lines.map(l=>({...l,_ci:ci})))
-        } else {
-          // Store raw response snippet for diagnostics
-          allParsedLines.push({character:null,text:`[${chunk.label} parse failed — raw: ${pRaw.slice(0,120)}]`,isStageDirection:true,scene:chunk.startScene,flagged:true,_ci:ci})
-        }
-      }catch(e){
-        allParsedLines.push({character:null,text:`[API error on ${chunk.label}: ${e.message}]`,isStageDirection:true,scene:chunk.startScene,flagged:true,_ci:ci})
-      }
-      // Rate limit: 5s between calls keeps us under 30,000 tokens/min for new accounts
-      if(ci < totalChunks-1) await pause(5000)
-    }
-
-    // Dedup overlap lines
+    // Dedup
     setProcStep("Tidying up…"); setProcProg(94)
-    const deduped=[]
-    for(const line of allParsedLines){
-      const{_ci,...rest}=line
-      const key=`${rest.character}||${(rest.text||"").trim().slice(0,80)}`
-      if(!deduped.slice(-10).some(l=>`${l.character}||${(l.text||"").trim().slice(0,80)}`===key)) deduped.push(rest)
+    const deduped = []
+    for (const line of allLines) {
+      const { _ci, ...rest } = line
+      const key = `${rest.character}||${(rest.text || "").trim().slice(0, 80)}`
+      if (!deduped.slice(-10).some(l => `${l.character}||${(l.text || "").trim().slice(0, 80)}` === key)) deduped.push(rest)
     }
 
-    // Group into scenes — be very forgiving about scene name matching
-    const sceneMap=new Map(); const sceneOrder=[]
-    for(const line of deduped){
-      // Normalise scene name: trim, collapse whitespace
-      const sc=((line.scene||"").trim().replace(/\s+/g," "))||"Scene 1"
-      if(!sceneMap.has(sc)){sceneMap.set(sc,[]);sceneOrder.push(sc)}
+    // Group into scenes with fuzzy matching
+    const fuzzy = s => s.toLowerCase().replace(/[^a-z0-9]/g, "")
+    const sceneMap = new Map(), sceneOrder = []
+    for (const line of deduped) {
+      const sc = ((line.scene || "").trim().replace(/\s+/g, " ")) || "Scene 1"
+      if (!sceneMap.has(sc)) { sceneMap.set(sc, []); sceneOrder.push(sc) }
       sceneMap.get(sc).push(line)
     }
-
-    // If meta gave us scene headings, try to match them to what we got
-    // Use fuzzy matching — "Scene 1" matches "SCENE 1", "Act 1 Scene 1" etc.
-    const fuzzy=s=>s.toLowerCase().replace(/[^a-z0-9]/g,"")
-    let orderedNames=sceneOrder
-    if(meta.sceneHeadings?.length>0){
-      const mapped=[]
-      for(const mh of meta.sceneHeadings){
-        // Try exact match first, then fuzzy
-        const exact=sceneOrder.find(s=>s===mh.trim())
-        const fuzz=exact||sceneOrder.find(s=>fuzzy(s)===fuzzy(mh))
-        if(fuzz&&!mapped.includes(fuzz)) mapped.push(fuzz)
-      }
-      // Add any scenes that didn't match meta headings at the end
-      const extras=sceneOrder.filter(s=>!mapped.includes(s))
-      orderedNames=[...mapped,...extras]
+    let orderedNames = sceneOrder
+    if (meta.sceneHeadings?.length > 0) {
+      const mapped = [], ms = new Set(meta.sceneHeadings.map(s => s.trim()))
+      for (const mh of meta.sceneHeadings) { const f = sceneOrder.find(s => s === mh.trim()) || sceneOrder.find(s => fuzzy(s) === fuzzy(mh)); if (f && !mapped.includes(f)) mapped.push(f) }
+      orderedNames = [...mapped, ...sceneOrder.filter(s => !ms.has(s))]
     }
+    let scenes = orderedNames.filter(t => sceneMap.has(t)).map(title => ({ title, lines: sceneMap.get(title) }))
+    if (!scenes.length && deduped.length > 0) scenes = [{ title: "Scene 1", lines: deduped }]
+    if (!scenes.length) scenes = [{ title: "Scene 1", lines: [{ character: null, text: "No lines found. Use Review to add lines manually.", isStageDirection: true, flagged: true }] }]
 
-    // Build scenes — fall back to putting ALL lines in one scene if grouping failed
-    let scenes=orderedNames.filter(t=>sceneMap.has(t)).map(title=>({title,lines:sceneMap.get(title)}))
-    if(!scenes.length&&deduped.length>0){
-      // Grouping failed entirely — dump everything into one scene
-      scenes=[{title:"Scene 1",lines:deduped}]
-    }
-    if(!scenes.length){
-      scenes=[{title:"Scene 1",lines:[{character:null,text:"No lines found. Please use Review to add lines manually.",isStageDirection:true,flagged:true}]}]
-    }
+    const parsedChars = [...new Set(deduped.map(l => l.character).filter(Boolean))].sort()
+    const finalChars = [...new Set([...(meta.characters || []), ...parsedChars])].sort()
+    const charList = finalChars.length > 0 ? finalChars : parsedChars
+    const dialogueLines = deduped.filter(l => !l.isStageDirection && l.character)
+    if (dialogueLines.length === 0) { const fe = deduped.find(l => l.text?.startsWith("[")); setProcErr(`No dialogue detected. ${fe ? fe.text.slice(0, 100) : "Please check the file is a play script."}`); return }
 
-    // Collect all character names — from both meta pass AND parsed lines
-    const parsedChars=[...new Set(deduped.map(l=>l.character).filter(Boolean))].sort()
-    const finalChars=[...new Set([...(meta.characters||[]),...parsedChars])].sort()
-
-    // If we got lines but no chars (meta failed), extract chars from lines only
-    const charList=finalChars.length>0?finalChars:parsedChars
-
-    const parsedScript={
-      title:meta.title||"Untitled Play",
-      characters:charList.map((name,i)=>({name,voiceType:i%2===0?"female":"male",voiceIdx:i})),
+    const parsedScript = {
+      title: meta.title || "Untitled Play",
+      characters: charList.map((name, i) => ({ name, voiceType: i % 2 === 0 ? "female" : "male", voiceIdx: i })),
       scenes
     }
-    const allL=scenes.flatMap(s=>s.lines)
-    const dialogueLines=allL.filter(l=>!l.isStageDirection&&l.character)
-    const flagged=allL.filter(l=>l.flagged)
-    const pct=allL.length?Math.round(flagged.length/allL.length*100):0
+    const allL = scenes.flatMap(s => s.lines)
+    const flagged = allL.filter(l => l.flagged)
+    const pct = allL.length ? Math.round(flagged.length / allL.length * 100) : 0
+    setProcStep(pct > 50 ? `⚠ ${pct}% of lines need review.` : flagged.length ? `Done — ${dialogueLines.length} lines, ${flagged.length} flagged for review.` : `Script read! ${dialogueLines.length} lines · ${charList.length} characters · ${scenes.length} sections`)
+    setScript(parsedScript); setProcProg(100)
 
-    // Only fail if we truly got zero dialogue lines
-    if(dialogueLines.length===0){
-      // Show first error message from parsed lines to help diagnose
-      const firstErr=allL.find(l=>l.text?.startsWith("["))
-      const diag=firstErr?` (${firstErr.text.slice(0,120)})`:" — all chunks returned empty."
-      setProcErr(`No dialogue was detected.${diag} Please try again or upload a clearer file.`); return
+    // Auto-save to Supabase if logged in
+    if (supabase && user) {
+      setProcStep("Saving to your library…")
+      try {
+        const { data } = await supabase.from("scripts").insert({ user_id: user.id, title: parsedScript.title, script_data: parsedScript }).select("id").single()
+        if (data?.id) setSavedId(data.id)
+      } catch(e) { console.error("Save failed:", e) }
     }
 
-    setProcStep(pct>50?`⚠ ${pct}% of lines need review.`:flagged.length?`Done — ${allL.length} lines, ${flagged.length} flagged for review.`:`Script read! ${dialogueLines.length} lines · ${charList.length} characters · ${scenes.length} section${scenes.length!==1?"s":""}`)
-    setScript(parsedScript); setProcProg(100)
-    setTimeout(()=>setScreen("review"),800)
+    setTimeout(() => setScreen("review"), 800)
   }
 
-  // ── Review helpers ────────────────────────────────────────────────────────
-  const updateLine=useCallback((si,li,upd)=>setScript(s=>({...s,scenes:s.scenes.map((sc,i)=>i!==si?sc:{...sc,lines:sc.lines.map((l,j)=>j!==li?l:{...l,...upd})})})),[])
-  const addLine=useCallback((si,afterLi)=>setScript(s=>({...s,scenes:s.scenes.map((sc,i)=>i!==si?sc:{...sc,lines:[...sc.lines.slice(0,afterLi+1),{character:sc.lines[afterLi]?.character||"",text:"",isStageDirection:false,flagged:false},...sc.lines.slice(afterLi+1)]})})),[])
-  const delLine=useCallback((si,li)=>setScript(s=>({...s,scenes:s.scenes.map((sc,i)=>i!==si?sc:{...sc,lines:sc.lines.filter((_,j)=>j!==li)})})),[])
-  const moveLine=useCallback((si,fromLi,toLi)=>setScript(s=>({...s,scenes:s.scenes.map((sc,i)=>{
-    if(i!==si)return sc
-    const lines=[...sc.lines]
-    const [moved]=lines.splice(fromLi,1)
-    lines.splice(toLi,0,moved)
-    return{...sc,lines}
-  })})),[])
-  const voiceCorrect=useCallback(async(si,li)=>{setIsVoiceCorr(true);try{const t=await listenOnce();if(t)updateLine(si,li,{text:t,flagged:false})}finally{setIsVoiceCorr(false)}},[updateLine])
+  // ── Review helpers ─────────────────────────────────────────────────────────
+  const updateLine = useCallback((si, li, upd) => setScript(s => ({ ...s, scenes: s.scenes.map((sc, i) => i !== si ? sc : { ...sc, lines: sc.lines.map((l, j) => j !== li ? l : { ...l, ...upd }) }) })), [])
+  const addLine    = useCallback((si, afterLi) => setScript(s => ({ ...s, scenes: s.scenes.map((sc, i) => i !== si ? sc : { ...sc, lines: [...sc.lines.slice(0, afterLi + 1), { character: sc.lines[afterLi]?.character || "", text: "", isStageDirection: false, flagged: false }, ...sc.lines.slice(afterLi + 1)] }) })), [])
+  const delLine    = useCallback((si, li) => setScript(s => ({ ...s, scenes: s.scenes.map((sc, i) => i !== si ? sc : { ...sc, lines: sc.lines.filter((_, j) => j !== li) }) })), [])
+  const moveLine   = useCallback((si, from, to) => setScript(s => ({ ...s, scenes: s.scenes.map((sc, i) => { if (i !== si) return sc; const ls = [...sc.lines]; const [m] = ls.splice(from, 1); ls.splice(to, 0, m); return { ...sc, lines: ls } }) })), [])
+  const voiceCorrect = useCallback(async (si, li) => { setIsVoiceCorr(true); try { const t = await listenOnce(); if (t) updateLine(si, li, { text: t, flagged: false }) } finally { setIsVoiceCorr(false) } }, [updateLine])
 
-  // ── Recording ─────────────────────────────────────────────────────────────
-  const startRec=async name=>{
-    try{
-      const stream=await navigator.mediaDevices.getUserMedia({audio:true})
-      const mr=new MediaRecorder(stream); chunksRef.current=[]
-      mr.ondataavailable=e=>chunksRef.current.push(e.data)
-      mr.onstop=()=>{
-        const blob=new Blob(chunksRef.current,{type:"audio/webm"})
-        setRecordings(p=>({...p,[name]:URL.createObjectURL(blob)}))
-        stream.getTracks().forEach(t=>t.stop()); setIsRec(false); setRecFor(null)
-      }
-      mediaRef.current=mr; mr.start(); setIsRec(true); setRecFor(name)
-    }catch{alert("Microphone access denied.")}
+  // ── Recording ──────────────────────────────────────────────────────────────
+  const startRec = async name => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mr = new MediaRecorder(stream); chunksRef.current = []
+      mr.ondataavailable = e => chunksRef.current.push(e.data)
+      mr.onstop = () => { const blob = new Blob(chunksRef.current, { type: "audio/webm" }); setRecordings(p => ({ ...p, [name]: URL.createObjectURL(blob) })); stream.getTracks().forEach(t => t.stop()); setIsRec(false); setRecFor(null) }
+      mediaRef.current = mr; mr.start(); setIsRec(true); setRecFor(name)
+    } catch { alert("Microphone access denied.") }
   }
-  const stopRec=()=>mediaRef.current?.stop()
+  const stopRec = () => mediaRef.current?.stop()
 
-  // ── TTS ───────────────────────────────────────────────────────────────────
-  const speak=useCallback((text,charName)=>new Promise(resolve=>{
-    if(!text?.trim()){resolve();return}
-    if(recordings[charName]){const a=new Audio(recordings[charName]);a.onended=resolve;a.onerror=resolve;a.play().catch(resolve);return}
+  // ── TTS ────────────────────────────────────────────────────────────────────
+  const speak = useCallback((text, charName) => new Promise(resolve => {
+    if (!text?.trim()) { resolve(); return }
+    if (recordings[charName]) { const a = new Audio(recordings[charName]); a.onended = resolve; a.onerror = resolve; a.play().catch(resolve); return }
     window.speechSynthesis.cancel()
-    const u=new SpeechSynthesisUtterance(text)
-    const ch=script?.characters.find(c=>c.name===charName)
-    if(ch){u.voice=pickVoice(ch.voiceType,ch.voiceIdx);u.pitch=ch.voiceType==="female"?1.12:0.86;u.rate=0.88}
-    u.onend=resolve;u.onerror=resolve;window.speechSynthesis.speak(u)
-  }),[recordings,script,pickVoice])
+    const u = new SpeechSynthesisUtterance(text)
+    const ch = script?.characters.find(c => c.name === charName)
+    if (ch) { u.voice = pickVoice(ch.voiceType, ch.voiceIdx); u.pitch = ch.voiceType === "female" ? 1.12 : 0.86; u.rate = 0.88 }
+    u.onend = resolve; u.onerror = resolve; window.speechSynthesis.speak(u)
+  }), [recordings, script, pickVoice])
 
-  // ── Rehearsal loop ────────────────────────────────────────────────────────
-  const startRehearsal=useCallback(async()=>{
-    const scene=script?.scenes.find(s=>s.title===selScene)
-    if(!scene||myChars.length===0)return
-    const lines=scene.lines, myC=[...myChars]
-    sceneRef.current={lines,myChars:myC}
-    rehearsalOn.current=true; promptedRef.current=false
-    const acc=[]
+  // ── Rehearsal ──────────────────────────────────────────────────────────────
+  const startRehearsal = useCallback(async () => {
+    const scene = script?.scenes.find(s => s.title === selScene)
+    if (!scene || myChars.length === 0) return
+    const lines = scene.lines.filter(l => !hideStageDir || !l.isStageDirection)
+    const myC = [...myChars]
+    sceneRef.current = { lines, myChars: myC }
+    rehearsalOn.current = true; promptedRef.current = false
+    const acc = []
     setLineResults([]); setCurIdx(0); setCurSpoken(""); setCurAccuracy(null); setPromptHint(""); setPhase("idle"); setScreen("rehearsal")
     await pause(1000)
-    for(let i=0;i<lines.length;i++){
-      if(!rehearsalOn.current)return
-      const line=lines[i]
-      setCurIdx(i); setCurSpoken(""); setCurAccuracy(null); setPromptHint(""); promptedRef.current=false
-      if(line.isStageDirection){setPhase("stage");await pause(1200);continue}
-      if(!myC.includes(line.character)){
-        setPhase("speaking"); await speak(line.text,line.character); await pause(350)
-      }else{
+    for (let i = 0; i < lines.length; i++) {
+      if (!rehearsalOn.current) return
+      const line = lines[i]
+      setCurIdx(i); setCurSpoken(""); setCurAccuracy(null); setPromptHint(""); promptedRef.current = false
+      if (line.isStageDirection) { setPhase("stage"); await pause(1200); continue }
+      if (!myC.includes(line.character)) { setPhase("speaking"); await speak(line.text, line.character); await pause(350) }
+      else {
         setPhase("myLine"); await pause(1800)
-        if(!rehearsalOn.current)return
+        if (!rehearsalOn.current) return
         setPhase("listening")
-        const spoken=await listenOnce()
-        if(!rehearsalOn.current)return
-        const accuracy=calcAccuracy(line.text,spoken)
-        const result={lineIdx:i,expected:line.text,spoken,accuracy,prompted:promptedRef.current,character:line.character}
+        const spoken = await listenOnce()
+        if (!rehearsalOn.current) return
+        const accuracy = calcAccuracy(line.text, spoken)
+        const result = { lineIdx: i, expected: line.text, spoken, accuracy, prompted: promptedRef.current, character: line.character }
         acc.push(result); setLineResults([...acc]); setCurSpoken(spoken); setCurAccuracy(accuracy); setPhase("showing"); await pause(3400)
       }
     }
-    if(!rehearsalOn.current)return
-    setPhase("complete"); rehearsalOn.current=false
-    if(acc.length){const{medal,accuracy,prompts}=scoreMedal(acc);setHistory(h=>[...h,{scene:selScene,medal,accuracy,prompts,ts:Date.now()}])}
-  },[script,selScene,myChars,speak])
+    if (!rehearsalOn.current) return
+    setPhase("complete"); rehearsalOn.current = false
+    if (acc.length) { const { medal, accuracy, prompts } = scoreMedal(acc); setHistory(h => [...h, { scene: selScene, medal, accuracy, prompts, ts: Date.now() }]) }
+  }, [script, selScene, myChars, speak, hideStageDir])
 
-  const stopRehearsal=()=>{rehearsalOn.current=false;window.speechSynthesis?.cancel();setPhase("idle");setScreen("setup")}
-  const requestPrompt=()=>{
-    const line=sceneRef.current.lines[curIdx];if(!line)return
-    const words=line.text.split(" ")
-    setPromptHint(words.slice(0,Math.max(3,Math.ceil(words.length*0.25))).join(" ")+"…")
-    promptedRef.current=true
-  }
+  const stopRehearsal = () => { rehearsalOn.current = false; window.speechSynthesis?.cancel(); setPhase("idle"); setScreen("setup") }
+  const requestPrompt = () => { const line = sceneRef.current.lines[curIdx]; if (!line) return; const words = line.text.split(" "); setPromptHint(words.slice(0, Math.max(3, Math.ceil(words.length * 0.25))).join(" ") + "…"); promptedRef.current = true }
 
-  // ── Word lookup ───────────────────────────────────────────────────────────
-  const lookupWord=async(word,lineText,mode="def")=>{
-    const clean=word.replace(/[^\w'''\-]/g,"");if(clean.length<2)return
-    setWModal({word:clean,lineText,mode});setWResult("");setWLoad(true)
-    try{
-      if(mode==="def")setWResult(await askClaude([{role:"user",content:`Define "${clean}" for a theatre actor. If archaic give the modern meaning. 2–3 sentences.`}],"Theatre vocabulary guide.",400))
-      else setWResult(await askClaude([{role:"user",content:`Translate into plain modern English:\n"${lineText}"\nFocus on "${clean}". Give a full modern version of the whole line.`}],"Translator of archaic text for actors.",500))
-    }catch{setWResult("Could not retrieve — please try again.")}
+  // ── Word lookup ────────────────────────────────────────────────────────────
+  const lookupWord = async (word, lineText, mode = "def") => {
+    const clean = word.replace(/[^\w'''\-]/g, ""); if (clean.length < 2) return
+    setWModal({ word: clean, lineText, mode }); setWResult(""); setWLoad(true)
+    try {
+      if (mode === "def") setWResult(await askClaude([{ role: "user", content: `Define "${clean}" for a theatre actor. If archaic give the modern meaning. 2–3 sentences.` }], "Theatre vocabulary guide.", 400))
+      else setWResult(await askClaude([{ role: "user", content: `Translate into plain modern English:\n"${lineText}"\nFocus on "${clean}". Give a full modern version.` }], "Translator of archaic text for actors.", 500))
+    } catch { setWResult("Could not retrieve — please try again.") }
     setWLoad(false)
   }
 
-  // ── Computed ──────────────────────────────────────────────────────────────
-  const currentScene=script?.scenes.find(s=>s.title===selScene)
-  const allLines=(currentScene?.lines||[]).filter(l=>!hideStageDir||!l.isStageDirection)
-  const curLine=allLines[curIdx]
+  // ── Computed ───────────────────────────────────────────────────────────────
+  const currentScene = script?.scenes.find(s => s.title === selScene)
+  const allLines = (currentScene?.lines || []).filter(l => !hideStageDir || !l.isStageDirection)
+  const curLine = allLines[curIdx]
 
-  // ─── RENDER ───────────────────────────────────────────────────────────────
-  return(
+  // ── RENDER ─────────────────────────────────────────────────────────────────
+  return (
     <div className="app">
       <style>{CSS}</style>
 
-      {/* ══ UPLOAD ══════════════════════════════════════════════════════════ */}
-      {screen==="upload"&&(
+      {/* ══ AUTH SCREEN ══════════════════════════════════════════════════════ */}
+      {screen === "auth" && supabase && (
         <div className="screen center-screen">
-          <div className="upload-box">
+          <div className="auth-box">
             <div className="brand">
               <span className="brand-icon">🎭</span>
               <h1 className="brand-name">StagePrompt</h1>
               <p className="brand-sub">Your AI line-learning companion</p>
             </div>
+            <div className="auth-card">
+              <div className="auth-tabs">
+                <button className={`auth-tab${authMode==="login"?" on":""}`} onClick={()=>{setAuthMode("login");setAuthErr("")}}>Log in</button>
+                <button className={`auth-tab${authMode==="signup"?" on":""}`} onClick={()=>{setAuthMode("signup");setAuthErr("")}}>Create account</button>
+              </div>
+              <input className="auth-input" type="email" placeholder="Email address" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleAuth()}/>
+              <input className="auth-input" type="password" placeholder="Password" value={authPass} onChange={e=>setAuthPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleAuth()}/>
+              {authErr && <p className={`auth-err${authErr.startsWith("✅")?" ok":""}`}>{authErr}</p>}
+              <button className="go-btn full" disabled={authLoading||!authEmail||!authPass} onClick={handleAuth}>
+                {authLoading?"Please wait…":authMode==="login"?"Log in →":"Create account →"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
+      {/* ══ LIBRARY SCREEN ══════════════════════════════════════════════════ */}
+      {screen === "library" && (
+        <div className="screen lib-screen">
+          <header className="lib-head">
+            <div>
+              <h1 className="lib-title">🎭 StagePrompt</h1>
+              <p className="lib-sub">My Script Library</p>
+            </div>
+            <div className="lib-head-right">
+              {user && <span className="lib-user">{user.email}</span>}
+              <button className="go-btn sm" onClick={()=>setScreen("upload")}>+ Upload New Script</button>
+              {supabase && <button className="signout-btn" onClick={signOut}>Sign out</button>}
+            </div>
+          </header>
+
+          {!keyReady && (
+            <div className="lib-key-bar">
+              <div className="lib-key-inner">
+                <p className="lib-key-label">🔑 Enter your Anthropic API key to enable script reading:</p>
+                <div className="key-row">
+                  <input className="key-input" type="password" placeholder="sk-ant-…" value={apiKey}
+                    onChange={e=>setApiKey(e.target.value)}
+                    onKeyDown={e=>{ if(e.key==="Enter"){ _key=apiKey.trim(); setKeyReady(true) }}}/>
+                  <button className="go-btn sm" onClick={()=>{ _key=apiKey.trim(); setKeyReady(true) }}>Save</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="lib-body">
+            {libLoading && <p className="lib-loading">Loading your scripts…</p>}
+            {!libLoading && library.length === 0 && (
+              <div className="lib-empty">
+                <p className="lib-empty-icon">📜</p>
+                <p className="lib-empty-title">No scripts yet</p>
+                <p className="lib-empty-sub">Upload your first script to get started</p>
+                <button className="go-btn" onClick={()=>setScreen("upload")}>+ Upload Script</button>
+              </div>
+            )}
+            <div className="lib-grid">
+              {library.map(s => (
+                <div key={s.id} className={`lib-card${savedId===s.id?" active":""}`}>
+                  <div className="lib-card-body" onClick={()=>loadScript(s.id)}>
+                    <p className="lib-card-title">{s.title}</p>
+                    <p className="lib-card-date">Last opened {new Date(s.updated_at).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</p>
+                  </div>
+                  <div className="lib-card-foot">
+                    <button className="lib-open-btn" onClick={()=>loadScript(s.id)}>Open →</button>
+                    <button className="lib-del-btn" onClick={()=>{ if(window.confirm(`Delete "${s.title}"?`)) deleteScript(s.id) }}>🗑</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ UPLOAD ══════════════════════════════════════════════════════════ */}
+      {screen === "upload" && (
+        <div className="screen center-screen">
+          <div className="upload-box">
+            <div className="brand">
+              <span className="brand-icon">🎭</span>
+              <h1 className="brand-name">StagePrompt</h1>
+              <p className="brand-sub">Upload a new script</p>
+            </div>
+            {supabase && user && (
+              <button className="back-btn" style={{marginBottom:"1rem"}} onClick={()=>setScreen("library")}>← Back to My Library</button>
+            )}
             {!keyReady ? (
               <div className="key-card">
                 <h2 className="key-title">Enter your Anthropic API key</h2>
-                <p className="key-body">StagePrompt uses Claude AI to read your script. You need a free API key — you only enter this once per session.</p>
+                <p className="key-body">StagePrompt uses Claude AI to read your script. You need an API key from Anthropic — you only enter this once per session.</p>
                 <ol className="key-steps">
-                  <li>Go to <a href="https://console.anthropic.com" target="_blank" rel="noreferrer">console.anthropic.com</a> and sign up free</li>
+                  <li>Go to <a href="https://console.anthropic.com" target="_blank" rel="noreferrer">console.anthropic.com</a> and sign up</li>
                   <li>Click <strong>API Keys</strong> → <strong>Create Key</strong></li>
-                  <li>Copy the key (starts with <code>sk-ant-</code>) and paste below</li>
+                  <li>Copy the key and paste it below</li>
                 </ol>
                 <div className="key-row">
-                  <input className="key-input" type="password" placeholder="sk-ant-…"
-                    value={apiKey} onChange={e=>setApiKey(e.target.value)}
-                    onKeyDown={e=>{
-                      if(e.key==="Enter"&&apiKey.trim().length>10){
-                        _key=apiKey.trim()
-                        setKeyReady(true)
-                      }
-                    }}/>
-                  <button className="go-btn" disabled={apiKey.trim().length<10}
-                    onClick={()=>{
-                      _key=apiKey.trim()
-                      setKeyReady(true)
-                    }}>
-                    Continue →
-                  </button>
+                  <input className="key-input" type="password" placeholder="sk-ant-…" value={apiKey}
+                    onChange={e => setApiKey(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") { _key = apiKey.trim(); setKeyReady(true) } }} />
+                  <button className="go-btn" onClick={() => { _key = apiKey.trim(); setKeyReady(true) }}>Continue →</button>
                 </div>
-                <p className="key-note">🔒 Your key stays in your browser — never stored or shared.</p>
+                <p className="key-note">🔒 Your key is never stored or shared.</p>
               </div>
             ) : (
               <>
-                <DropZone onProcess={processFiles}/>
-                <button className="change-key-btn" onClick={()=>setKeyReady(false)}>Change API key</button>
+                <DropZone onProcess={processFiles} />
+                <button className="change-key-btn" onClick={() => setKeyReady(false)}>Change API key</button>
               </>
             )}
           </div>
@@ -709,153 +782,129 @@ SCRIPT SECTION:\n${chunk.text}`
       )}
 
       {/* ══ PROCESSING ══════════════════════════════════════════════════════ */}
-      {screen==="processing"&&(
+      {screen === "processing" && (
         <div className="screen center-screen">
           <div className="proc-card">
             <div className="spinner">📜</div>
             <h2 className="proc-title">Reading your script…</h2>
             <p className="proc-step">{procStep}</p>
             <div className="prog-track">
-              <div className="prog-fill" style={{width:`${procProg}%`}}/>
-              {procProg>0&&procProg<100&&<div className="prog-pulse"/>}
+              <div className="prog-fill" style={{ width: `${procProg}%` }} />
+              {procProg > 0 && procProg < 100 && <div className="prog-pulse" />}
             </div>
             <div className="prog-foot">
               <span className="prog-pct">{procProg}%</span>
-              <ElapsedTimer running={!procErr&&procProg<100}/>
+              <ElapsedTimer running={!procErr && procProg < 100} />
             </div>
             {procErr
-              ?<div className="proc-err"><p>{procErr}</p><button className="go-btn sm" style={{marginTop:"1rem"}} onClick={()=>{setProcErr("");setScreen("upload")}}>← Try Again</button></div>
-              :<div className="proc-notice">
-                <p>⏳ <strong>Please be patient</strong> — reading and parsing a full play script can take <strong>several minutes</strong>, and longer plays may take <strong>10–15 minutes or more</strong>.</p>
-                <p style={{marginTop:".5rem"}}>The progress bar will keep moving as it works through each section. <strong>Please don't close or navigate away from this page</strong> or you'll need to start over.</p>
-              </div>
+              ? <div className="proc-err"><p>{procErr}</p><button className="go-btn sm" style={{ marginTop: "1rem" }} onClick={() => { setProcErr(""); setScreen("upload") }}>← Try Again</button></div>
+              : <div className="proc-notice">
+                  <p>⏳ <strong>Please be patient</strong> — reading a full script can take <strong>several minutes or longer</strong> for longer plays.</p>
+                  <p style={{ marginTop: ".4rem" }}><strong>Do not close or navigate away</strong> from this page or you will need to start over.</p>
+                </div>
             }
           </div>
         </div>
       )}
 
       {/* ══ REVIEW ══════════════════════════════════════════════════════════ */}
-      {screen==="review"&&script&&(()=>{
-        const flat   =script.scenes.flatMap((sc,si)=>sc.lines.map((l,li)=>({...l,si,li,scTitle:sc.title})))
-        const flagged=flat.filter(l=>l.flagged)
-        const pct    =flat.length?Math.round(flagged.length/flat.length*100):0
-        const stepSrc=reviewFilter==="flagged"?flagged:flat
-        const safe   =Math.min(stepIdx,Math.max(0,stepSrc.length-1))
-        const cur    =stepSrc[safe]
-        return(
+      {screen === "review" && script && (() => {
+        const flat = script.scenes.flatMap((sc, si) => sc.lines.map((l, li) => ({ ...l, si, li, scTitle: sc.title })))
+        const flagged = flat.filter(l => l.flagged)
+        const pct = flat.length ? Math.round(flagged.length / flat.length * 100) : 0
+        const stepSrc = reviewFilter === "flagged" ? flagged : flat
+        const safe = Math.min(stepIdx, Math.max(0, stepSrc.length - 1))
+        const cur = stepSrc[safe]
+        return (
           <div className="screen rev-screen">
             <header className="rev-head">
               <div>
                 <h1 className="rev-title">Review Script</h1>
-                <p className="rev-sub">&#8220;{script.title}&#8221; &middot; {script.scenes.length} scenes &middot; {flat.length} lines &middot; {script.characters.length} characters</p>
+                <p className="rev-sub">"{script.title}" · {script.scenes.length} scenes · {flat.length} lines · {script.characters.length} characters</p>
               </div>
               <div className="rev-head-right">
-                {flagged.length>0
-                  ?<span className={`badge${pct>50?" red":" amber"}`}>⚑ {flagged.length} line{flagged.length!==1?"s":""} to review</span>
-                  :<span className="badge green">✓ Looks clean</span>}
-                <button className="go-btn sm" onClick={()=>setScreen("setup")}>Continue to Setup →</button>
+                {flagged.length > 0 ? <span className={`badge ${pct > 50 ? "red" : "amber"}`}>⚑ {flagged.length} line{flagged.length !== 1 ? "s" : ""} to review</span> : <span className="badge green">✓ Looks clean</span>}
+                <button className="go-btn sm" onClick={() => setScreen("setup")}>Continue to Setup →</button>
               </div>
             </header>
-
-            {pct>50&&<div className="warn-bar">
-              <span><strong>⚠ {pct}% of lines need attention.</strong> For best results, try uploading a digital (not scanned) PDF.</span>
-              <button className="reup-btn" onClick={()=>{setScript(null);setScreen("upload")}}>↑ New upload</button>
-            </div>}
-
+            {pct > 50 && <div className="warn-bar"><span><strong>⚠ {pct}% of lines need attention.</strong> Try uploading a digital PDF for better results.</span><button className="reup-btn" onClick={() => { setScript(null); setScreen("upload") }}>↑ New upload</button></div>}
             <div className="rev-toolbar">
               <div className="tab-group">
-                <button className={`tab${reviewMode==="scroll"?" on":""}`} onClick={()=>setReviewMode("scroll")}>📜 Scroll &amp; edit all</button>
-                <button className={`tab${reviewMode==="step"?" on":""}`} onClick={()=>{setReviewMode("step");setStepIdx(0)}}>⟶ Step through</button>
+                <button className={`tab${reviewMode === "scroll" ? " on" : ""}`} onClick={() => setReviewMode("scroll")}>📜 Scroll &amp; edit all</button>
+                <button className={`tab${reviewMode === "step" ? " on" : ""}`} onClick={() => { setReviewMode("step"); setStepIdx(0) }}>⟶ Step through</button>
               </div>
-              {reviewMode==="step"&&<div className="tab-group sm">
-                <button className={`tab${reviewFilter==="flagged"?" on":""}`} onClick={()=>{setReviewFilter("flagged");setStepIdx(0)}}>Flagged ({flagged.length})</button>
-                <button className={`tab${reviewFilter==="all"?" on":""}`} onClick={()=>{setReviewFilter("all");setStepIdx(0)}}>All ({flat.length})</button>
+              {reviewMode === "step" && <div className="tab-group sm">
+                <button className={`tab${reviewFilter === "flagged" ? " on" : ""}`} onClick={() => { setReviewFilter("flagged"); setStepIdx(0) }}>Flagged ({flagged.length})</button>
+                <button className={`tab${reviewFilter === "all" ? " on" : ""}`} onClick={() => { setReviewFilter("all"); setStepIdx(0) }}>All ({flat.length})</button>
               </div>}
             </div>
-
-            {reviewMode==="scroll"&&(
+            {reviewMode === "scroll" && (
               <div className="rev-body">
-                {script.scenes.map((sc,si)=>(
+                {script.scenes.map((sc, si) => (
                   <div key={si} className="rev-scene-block">
                     <h2 className="scene-label">{sc.title}</h2>
-                    {sc.lines.map((line,li)=>{
-                      const isEd=editLine?.si===si&&editLine?.li===li
-                      return(
-                        <div key={li} className={`rline${line.flagged?" flag":""}${isEd?" ed":""}`}
+                    {sc.lines.map((line, li) => {
+                      const isEd = editLine?.si === si && editLine?.li === li
+                      return (
+                        <div key={li}
+                          className={`rline${line.flagged ? " flag" : ""}${isEd ? " ed" : ""}`}
                           draggable={!isEd}
-                          onDragStart={()=>{dragRef.current={si,li}}}
-                          onDragOver={e=>{e.preventDefault();e.currentTarget.classList.add("drag-over")}}
-                          onDragLeave={e=>{e.currentTarget.classList.remove("drag-over")}}
-                          onDrop={e=>{
-                            e.currentTarget.classList.remove("drag-over")
-                            if(dragRef.current&&dragRef.current.si===si&&dragRef.current.li!==li){
-                              moveLine(si,dragRef.current.li,li)
-                            }
-                            dragRef.current=null
-                          }}
-                          onDragEnd={e=>{e.currentTarget.classList.remove("drag-over");dragRef.current=null}}
-                        >
-                          {!isEd?(
+                          onDragStart={() => { dragRef.current = { si, li } }}
+                          onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add("drag-over") }}
+                          onDragLeave={e => e.currentTarget.classList.remove("drag-over")}
+                          onDrop={e => { e.currentTarget.classList.remove("drag-over"); if (dragRef.current?.si === si && dragRef.current?.li !== li) moveLine(si, dragRef.current.li, li); dragRef.current = null }}
+                          onDragEnd={e => { e.currentTarget.classList.remove("drag-over"); dragRef.current = null }}>
+                          {!isEd ? (
                             <div className="rline-view">
-                              <span className="drag-grip" title="Drag to reorder">⠿</span>
+                              <span className="drag-grip">⠿</span>
                               <div className="rline-main">
-                                {line.character&&<span className="rline-char">{line.character}</span>}
-                                <span className={`rline-text${line.isStageDirection?" dir":""}${!line.text?" empty":""}`}>
-                                  {line.text||(line.flagged?"(empty — click ✏ to add)":"(empty)")}
-                                </span>
-                                {line.flagged&&<span className="flag-pip">⚑</span>}
+                                {line.character && <span className="rline-char">{line.character}</span>}
+                                <span className={`rline-text${line.isStageDirection ? " dir" : ""}${!line.text ? " empty" : ""}`}>{line.text || "(empty — click ✏ to add)"}</span>
+                                {line.flagged && <span className="flag-pip">⚑</span>}
                               </div>
                               <div className="rline-btns">
-                                <button className="ract" onClick={()=>{setEditLine({si,li});setEditText(line.text);setEditChar(line.character||"")}}>✏</button>
-                                <button className="ract" onClick={()=>voiceCorrect(si,li)} disabled={isVoiceCorr}>🎙</button>
-                                <button className="ract danger" onClick={()=>delLine(si,li)}>✕</button>
+                                <button className="ract" onClick={() => { setEditLine({ si, li }); setEditText(line.text); setEditChar(line.character || "") }}>✏</button>
+                                <button className="ract" onClick={() => voiceCorrect(si, li)} disabled={isVoiceCorr}>🎙</button>
+                                <button className="ract danger" onClick={() => delLine(si, li)}>✕</button>
                               </div>
                             </div>
-                          ):(
+                          ) : (
                             <div className="rline-form">
-                              <input className="form-char" placeholder="CHARACTER NAME (leave blank for stage direction)" value={editChar} onChange={e=>setEditChar(e.target.value)}/>
-                              <textarea className="form-text" rows={3} value={editText} onChange={e=>setEditText(e.target.value)}/>
+                              <input className="form-char" placeholder="CHARACTER NAME (blank = stage direction)" value={editChar} onChange={e => setEditChar(e.target.value)} />
+                              <textarea className="form-text" rows={3} value={editText} onChange={e => setEditText(e.target.value)} />
                               <div className="form-acts">
-                                <button className="voice-btn" onClick={()=>voiceCorrect(si,li)} disabled={isVoiceCorr}>{isVoiceCorr?"🎙 Listening…":"🎙 Speak"}</button>
-                                <button className="go-btn sm" onClick={()=>{updateLine(si,li,{text:editText,character:editChar||null,isStageDirection:!editChar,flagged:false});setEditLine(null)}}>Save</button>
-                                <button className="cancel-btn" onClick={()=>setEditLine(null)}>Cancel</button>
+                                <button className="voice-btn" onClick={() => voiceCorrect(si, li)} disabled={isVoiceCorr}>{isVoiceCorr ? "🎙 Listening…" : "🎙 Speak"}</button>
+                                <button className="go-btn sm" onClick={() => { updateLine(si, li, { text: editText, character: editChar || null, isStageDirection: !editChar, flagged: false }); setEditLine(null) }}>Save</button>
+                                <button className="cancel-btn" onClick={() => setEditLine(null)}>Cancel</button>
                               </div>
                             </div>
                           )}
-                          <button className="between-btn" onClick={()=>addLine(si,li)} title="Insert line below">+</button>
+                          <button className="between-btn" onClick={() => addLine(si, li)}>+</button>
                         </div>
                       )
                     })}
-                    <button className="end-btn" onClick={()=>addLine(si,sc.lines.length-1)}>+ Add line</button>
+                    <button className="end-btn" onClick={() => addLine(si, sc.lines.length - 1)}>+ Add line</button>
                   </div>
                 ))}
               </div>
             )}
-
-            {reviewMode==="step"&&stepSrc.length===0&&(
-              <div className="rev-empty"><p>✓ No flagged lines!</p><button className="go-btn" onClick={()=>setScreen("setup")}>Continue →</button></div>
-            )}
-
-            {reviewMode==="step"&&cur&&(
+            {reviewMode === "step" && stepSrc.length === 0 && <div className="rev-empty"><p>✓ No flagged lines!</p><button className="go-btn" onClick={() => setScreen("setup")}>Continue →</button></div>}
+            {reviewMode === "step" && cur && (
               <div className="step-body">
                 <div className="step-nav">
-                  <button className="snav" disabled={safe===0} onClick={()=>setStepIdx(i=>Math.max(0,i-1))}>← Prev</button>
-                  <span className="sctr">{safe+1} / {stepSrc.length}</span>
-                  <button className="snav" disabled={safe>=stepSrc.length-1} onClick={()=>setStepIdx(i=>Math.min(stepSrc.length-1,i+1))}>Next →</button>
+                  <button className="snav" disabled={safe === 0} onClick={() => setStepIdx(i => Math.max(0, i - 1))}>← Prev</button>
+                  <span className="sctr">{safe + 1} / {stepSrc.length}</span>
+                  <button className="snav" disabled={safe >= stepSrc.length - 1} onClick={() => setStepIdx(i => Math.min(stepSrc.length - 1, i + 1))}>Next →</button>
                 </div>
                 <div className="step-card">
                   <div className="step-scene-tag">{cur.scTitle}</div>
-                  {cur.flagged&&<div className="step-flag">⚑ Needs review</div>}
-                  <div className="step-field"><label className="step-lbl">Character</label>
-                    <input className="step-in" value={cur.character||""} placeholder={cur.isStageDirection?"Stage direction":"CHARACTER NAME"} onChange={e=>updateLine(cur.si,cur.li,{character:e.target.value||null})}/>
-                  </div>
-                  <div className="step-field"><label className="step-lbl">Line text</label>
-                    <textarea className="step-ta" rows={5} value={cur.text} onChange={e=>updateLine(cur.si,cur.li,{text:e.target.value,flagged:false})}/>
-                  </div>
+                  {cur.flagged && <div className="step-flag">⚑ Needs review</div>}
+                  <div className="step-field"><label className="step-lbl">Character</label><input className="step-in" value={cur.character || ""} placeholder={cur.isStageDirection ? "Stage direction" : "CHARACTER NAME"} onChange={e => updateLine(cur.si, cur.li, { character: e.target.value || null })} /></div>
+                  <div className="step-field"><label className="step-lbl">Line text</label><textarea className="step-ta" rows={5} value={cur.text} onChange={e => updateLine(cur.si, cur.li, { text: e.target.value, flagged: false })} /></div>
                   <div className="step-acts">
-                    <button className="voice-btn" onClick={()=>voiceCorrect(cur.si,cur.li)} disabled={isVoiceCorr}>{isVoiceCorr?"🎙 Listening…":"🎙 Speak correction"}</button>
-                    <button className="step-ok" onClick={()=>{updateLine(cur.si,cur.li,{flagged:false});setStepIdx(i=>Math.min(i+1,stepSrc.length-1))}}>✓ Mark OK &amp; Next</button>
-                    <button className="step-del" onClick={()=>{delLine(cur.si,cur.li);setStepIdx(i=>Math.max(0,i-1))}}>🗑 Delete</button>
+                    <button className="voice-btn" onClick={() => voiceCorrect(cur.si, cur.li)} disabled={isVoiceCorr}>{isVoiceCorr ? "🎙 Listening…" : "🎙 Speak"}</button>
+                    <button className="step-ok" onClick={() => { updateLine(cur.si, cur.li, { flagged: false }); setStepIdx(i => Math.min(i + 1, stepSrc.length - 1)) }}>✓ Mark OK &amp; Next</button>
+                    <button className="step-del" onClick={() => { delLine(cur.si, cur.li); setStepIdx(i => Math.max(0, i - 1)) }}>🗑 Delete</button>
                   </div>
                 </div>
               </div>
@@ -865,60 +914,40 @@ SCRIPT SECTION:\n${chunk.text}`
       })()}
 
       {/* ══ SETUP ═══════════════════════════════════════════════════════════ */}
-      {screen==="setup"&&script&&(
+      {screen === "setup" && script && (
         <div className="screen setup-screen">
           <header className="setup-head">
-            <button className="back-btn" onClick={()=>setScreen("review")}>← Back to Review</button>
-            <h1 className="play-title">&#8220;{script.title}&#8221;</h1>
-            <p className="play-meta">{script.characters.length} characters &middot; {script.scenes.length} scenes</p>
+            <button className="back-btn" onClick={() => setScreen("review")}>← Back to Review</button>
+            <h1 className="play-title">"{script.title}"</h1>
+            <p className="play-meta">{script.characters.length} characters · {script.scenes.length} scenes</p>
           </header>
-
           <div className="setup-grid">
-            {/* Cast panel */}
             <section className="panel">
               <p className="panel-label">YOUR ROLES</p>
-              <p className="panel-hint">Select every character you are playing. You can play multiple roles — tick as many as you like.</p>
-
-              {myChars.length>0&&(
+              <p className="panel-hint">Select every character you are playing — you can play multiple roles.</p>
+              {myChars.length > 0 && (
                 <div className="my-roles-box">
                   <p className="my-roles-label">You are playing:</p>
-                  <div className="my-roles-chips">
-                    {myChars.map(c=>(
-                      <span key={c} className="role-chip">
-                        {c}
-                        <button onClick={()=>toggleMyRole(c)} title="Remove">✕</button>
-                      </span>
-                    ))}
-                  </div>
+                  <div className="my-roles-chips">{myChars.map(c => <span key={c} className="role-chip">{c}<button onClick={() => toggleMyRole(c)}>✕</button></span>)}</div>
                 </div>
               )}
-
               <div className="char-list">
-                {script.characters.map(ch=>{
-                  const isMine=myRoles.has(ch.name)
-                  return(
-                    <div key={ch.name} className={`char-card${isMine?" mine":""}`}>
+                {script.characters.map(ch => {
+                  const isMine = myRoles.has(ch.name)
+                  return (
+                    <div key={ch.name} className={`char-card${isMine ? " mine" : ""}`}>
                       <div className="char-top">
                         <span className="char-name">{ch.name}</span>
-                        <button className={`role-btn${isMine?" on":""}`} onClick={()=>toggleMyRole(ch.name)}>
-                          {isMine?"★ My role":"☆ I play this"}
-                        </button>
+                        <button className={`role-btn${isMine ? " on" : ""}`} onClick={() => toggleMyRole(ch.name)}>{isMine ? "★ My role" : "☆ I play this"}</button>
                       </div>
-                      {!isMine&&(
+                      {!isMine && (
                         <div className="voice-area">
                           <div className="vtype-row">
-                            {["female","male","other"].map(t=>(
-                              <button key={t} className={`vt-btn${ch.voiceType===t?" on":""}`}
-                                onClick={()=>setScript(s=>({...s,characters:s.characters.map(c=>c.name===ch.name?{...c,voiceType:t}:c)}))}>
-                                {t==="female"?"♀":t==="male"?"♂":"⊙"} {t}
-                              </button>
-                            ))}
+                            {["female", "male", "other"].map(t => <button key={t} className={`vt-btn${ch.voiceType === t ? " on" : ""}`} onClick={() => setScript(s => ({ ...s, characters: s.characters.map(c => c.name === ch.name ? { ...c, voiceType: t } : c) }))}>{t === "female" ? "♀" : t === "male" ? "♂" : "⊙"} {t}</button>)}
                           </div>
                           <div className="rec-row">
-                            {recordings[ch.name]&&<span className="rec-ok">🎙 Custom voice</span>}
-                            {recFor===ch.name&&isRec
-                              ?<button className="rec-btn stop" onClick={stopRec}>⏹ Stop</button>
-                              :<button className="rec-btn" onClick={()=>startRec(ch.name)}>🎙 Record</button>}
+                            {recordings[ch.name] && <span className="rec-ok">🎙 Custom voice</span>}
+                            {recFor === ch.name && isRec ? <button className="rec-btn stop" onClick={stopRec}>⏹ Stop</button> : <button className="rec-btn" onClick={() => startRec(ch.name)}>🎙 Record</button>}
                           </div>
                         </div>
                       )}
@@ -927,156 +956,76 @@ SCRIPT SECTION:\n${chunk.text}`
                 })}
               </div>
             </section>
-
-            {/* Scene panel */}
             <section className="panel">
               <p className="panel-label">CHOOSE A SCENE</p>
-              {myChars.length>0&&(
-                <label className="skip-toggle">
-                  <input type="checkbox" checked={skipNoChar} onChange={e=>setSkipNoChar(e.target.checked)}/>
-                  {" "}Only show scenes where I have lines
-                </label>
-              )}
-              <label className="skip-toggle">
-                <input type="checkbox" checked={hideStageDir} onChange={e=>setHideStageDir(e.target.checked)}/>
-                {" "}Hide stage directions during rehearsal
-              </label>
-
+              {myChars.length > 0 && <label className="skip-toggle"><input type="checkbox" checked={skipNoChar} onChange={e => setSkipNoChar(e.target.checked)} /> Only show scenes where I have lines</label>}
+              <label className="skip-toggle"><input type="checkbox" checked={hideStageDir} onChange={e => setHideStageDir(e.target.checked)} /> Hide stage directions during rehearsal</label>
               <div className="scene-list">
                 {script.scenes
-                  .filter(sc=>!skipNoChar||myChars.length===0||sc.lines.some(l=>!l.isStageDirection&&myRoles.has(l.character)))
-                  .map(sc=>{
-                    const myCount=sc.lines.filter(l=>!l.isStageDirection&&myRoles.has(l.character)).length
-                    const total=sc.lines.filter(l=>!l.isStageDirection).length
-                    return(
-                      <button key={sc.title} className={`scene-btn${selScene===sc.title?" on":""}`} onClick={()=>setSelScene(sc.title)}>
-                        <span className="scene-name">{sc.title}</span>
-                        <span className="scene-meta">
-                          {total} lines{myCount>0&&<span className="my-ct"> · {myCount} yours</span>}
-                        </span>
-                      </button>
-                    )
+                  .filter(sc => !skipNoChar || myChars.length === 0 || sc.lines.some(l => !l.isStageDirection && myRoles.has(l.character)))
+                  .map(sc => {
+                    const myCount = sc.lines.filter(l => !l.isStageDirection && myRoles.has(l.character)).length
+                    const total = sc.lines.filter(l => !l.isStageDirection).length
+                    return <button key={sc.title} className={`scene-btn${selScene === sc.title ? " on" : ""}`} onClick={() => setSelScene(sc.title)}><span className="scene-name">{sc.title}</span><span className="scene-meta">{total} lines{myCount > 0 && <span className="my-ct"> · {myCount} yours</span>}</span></button>
                   })}
               </div>
-
-              {history.length>0&&(
-                <div className="hist-box">
-                  <p className="panel-label" style={{marginBottom:".5rem"}}>RECENT SCORES</p>
-                  {history.slice(-6).reverse().map((r,i)=>(
-                    <div key={i} className="hist-row">
-                      <span>{MEDALS[r.medal].emoji}</span>
-                      <span className="hist-scene">{r.scene}</span>
-                      <span style={{color:MEDALS[r.medal].color,fontWeight:600}}>{r.accuracy}%</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <button className="go-btn full" disabled={!selScene||myChars.length===0} onClick={startRehearsal}>
-                {!selScene?"← Select a scene first":myChars.length===0?"← Select your role(s)":"▶  Begin Rehearsal"}
-              </button>
-              <p className="setup-tip">💡 During rehearsal: click any word for a definition, right-click for modern English translation</p>
+              {history.length > 0 && <div className="hist-box"><p className="panel-label" style={{ marginBottom: ".5rem" }}>RECENT SCORES</p>{history.slice(-6).reverse().map((r, i) => <div key={i} className="hist-row"><span>{MEDALS[r.medal].emoji}</span><span className="hist-scene">{r.scene}</span><span style={{ color: MEDALS[r.medal].color, fontWeight: 600 }}>{r.accuracy}%</span></div>)}</div>}
+              <button className="go-btn full" disabled={!selScene || myChars.length === 0} onClick={startRehearsal}>{!selScene ? "← Select a scene first" : myChars.length === 0 ? "← Select your role(s)" : "▶  Begin Rehearsal"}</button>
+              <p className="setup-tip">💡 Click any word during rehearsal for definition · Right-click for modern English</p>
             </section>
           </div>
         </div>
       )}
 
       {/* ══ REHEARSAL ═══════════════════════════════════════════════════════ */}
-      {screen==="rehearsal"&&script&&(
+      {screen === "rehearsal" && script && (
         <div className="screen reh-screen">
           <div className="reh-bar">
             <button className="exit-btn" onClick={stopRehearsal}>← Exit</button>
             <span className="reh-scene">{selScene}</span>
-            <span className="reh-pos">{Math.min(curIdx+1,allLines.length)} / {allLines.length}</span>
+            <span className="reh-pos">{Math.min(curIdx + 1, allLines.length)} / {allLines.length}</span>
           </div>
-
           <div className="script-pane">
-            {allLines.map((line,i)=>{
-              const isCur=i===curIdx,isPast=i<curIdx
-              const isMe=!line.isStageDirection&&myRoles.has(line.character)
-              const result=lineResults.find(r=>r.lineIdx===i)
-              return(
-                <div key={i} className={["sl",isCur?"cur":"",isPast?"past":"",line.isStageDirection?"dir":"",isMe?"mine":""].filter(Boolean).join(" ")}>
-                  {!line.isStageDirection&&<span className="sl-char">{line.character}</span>}
+            {allLines.map((line, i) => {
+              const isCur = i === curIdx, isPast = i < curIdx, isMe = !line.isStageDirection && myRoles.has(line.character)
+              const result = lineResults.find(r => r.lineIdx === i)
+              return (
+                <div key={i} className={["sl", isCur ? "cur" : "", isPast ? "past" : "", line.isStageDirection ? "dir" : "", isMe ? "mine" : ""].filter(Boolean).join(" ")}>
+                  {!line.isStageDirection && <span className="sl-char">{line.character}</span>}
                   <span className="sl-text">
-                    {isCur&&isMe&&phase==="showing"&&result
-                      ?diffTokens(line.text,result.spoken).map((tok,j)=>tok.sp?<span key={j}> </span>:<span key={j} className={`sw ${tok.ok?"ok":"bad"}`} onClick={()=>lookupWord(tok.text,line.text,"def")} onContextMenu={e=>{e.preventDefault();lookupWord(tok.text,line.text,"mod")}}>{tok.text}</span>)
-                      :line.text.split(/(\s+)/).map((tok,j)=>/^\s+$/.test(tok)?<span key={j}> </span>:<span key={j} className="sw click" onClick={()=>lookupWord(tok,line.text,"def")} onContextMenu={e=>{e.preventDefault();lookupWord(tok,line.text,"mod")}}>{tok}</span>)
+                    {isCur && isMe && phase === "showing" && result
+                      ? diffTokens(line.text, result.spoken).map((tok, j) => tok.sp ? <span key={j}> </span> : <span key={j} className={`sw ${tok.ok ? "ok" : "bad"}`} onClick={() => lookupWord(tok.text, line.text, "def")} onContextMenu={e => { e.preventDefault(); lookupWord(tok.text, line.text, "mod") }}>{tok.text}</span>)
+                      : line.text.split(/(\s+)/).map((tok, j) => /^\s+$/.test(tok) ? <span key={j}> </span> : <span key={j} className="sw click" onClick={() => lookupWord(tok, line.text, "def")} onContextMenu={e => { e.preventDefault(); lookupWord(tok, line.text, "mod") }}>{tok}</span>)
                     }
                   </span>
-                  {result&&<span className={`sl-pct ${result.accuracy===100?"gold":result.accuracy>=75?"ok":"low"}`}>{result.accuracy}%</span>}
+                  {result && <span className={`sl-pct ${result.accuracy === 100 ? "gold" : result.accuracy >= 75 ? "ok" : "low"}`}>{result.accuracy}%</span>}
                 </div>
               )
             })}
           </div>
-
           <div className="dock">
-            {phase==="speaking"&&curLine&&!curLine.isStageDirection&&(
-              <div className="dock-row">
-                <div className="waves">{[10,20,30,20,10].map((h,i)=><span key={i} style={{height:h,animationDelay:`${i*.1}s`}}/>)}</div>
-                <div><span className="dock-who">{curLine.character}</span><span className="dock-muted"> is speaking…</span></div>
-              </div>
-            )}
-            {phase==="stage"&&curLine&&<div className="dock-row"><span>🎬</span><em className="dock-muted">{curLine.text}</em></div>}
-            {phase==="myLine"&&(
-              <div className="dock-col">
-                <div className="your-turn">YOUR LINE — {curLine?.character}</div>
-                <p className="dock-muted">Get ready…</p>
-                {promptHint&&<div className="prompt-hint">💡 {promptHint}</div>}
-              </div>
-            )}
-            {phase==="listening"&&(
-              <div className="dock-row listen-row">
-                <div className="mic-pulse"/>
-                <div className="dock-col left">
-                  <span className="listen-lbl">Listening…</span>
-                  {curSpoken&&<span className="interim">&#8220;{curSpoken}&#8221;</span>}
-                  {promptHint&&<div className="prompt-hint">💡 {promptHint}</div>}
-                </div>
-                <button className="hint-btn" onClick={requestPrompt}>💡 Prompt me</button>
-              </div>
-            )}
-            {phase==="showing"&&curAccuracy!==null&&(
-              <div className="dock-row">
-                <div className={`acc-ring ${curAccuracy===100?"gold":curAccuracy>=75?"ok":"low"}`}><span className="acc-num">{curAccuracy}%</span></div>
-                <div className="dock-col left">
-                  {curAccuracy===100?<p className="bravo">✨ Word perfect!</p>:<><p className="you-said-lbl">You said:</p><p className="you-said">&#8220;{curSpoken||"(nothing recognised)"}&#8221;</p></>}
-                </div>
-              </div>
-            )}
-            {phase==="complete"&&(()=>{
-              const{medal,accuracy,prompts}=scoreMedal(lineResults);const M=MEDALS[medal]
-              return(
-                <div className="dock-row complete-row">
-                  <span className="medal-em">{M.emoji}</span>
-                  <div className="dock-col left">
-                    <div className="medal-lbl" style={{color:M.color}}>{M.label}</div>
-                    <div className="dock-muted">Accuracy: {accuracy}% · Prompts: {prompts}</div>
-                    {medal==="gold"&&<div className="gold-msg">🌟 Perfect score — no prompts needed!</div>}
-                  </div>
-                  <div className="complete-btns">
-                    <button className="go-btn sm" onClick={startRehearsal}>🔁 Again</button>
-                    <button className="exit-btn" onClick={stopRehearsal}>← Setup</button>
-                  </div>
-                </div>
-              )
-            })()}
-            {(phase==="listening"||phase==="myLine")&&<p className="dock-tip">Click any word for definition · Right-click for modern English</p>}
+            {phase === "speaking" && curLine && !curLine.isStageDirection && <div className="dock-row"><div className="waves">{[10,20,30,20,10].map((h, i) => <span key={i} style={{ height: h, animationDelay: `${i * .1}s` }} />)}</div><div><span className="dock-who">{curLine.character}</span><span className="dock-muted"> is speaking…</span></div></div>}
+            {phase === "stage" && curLine && <div className="dock-row"><span>🎬</span><em className="dock-muted">{curLine.text}</em></div>}
+            {phase === "myLine" && <div className="dock-col"><div className="your-turn">YOUR LINE — {curLine?.character}</div><p className="dock-muted">Get ready…</p>{promptHint && <div className="prompt-hint">💡 {promptHint}</div>}</div>}
+            {phase === "listening" && <div className="dock-row listen-row"><div className="mic-pulse" /><div className="dock-col left"><span className="listen-lbl">Listening…</span>{curSpoken && <span className="interim">"{curSpoken}"</span>}{promptHint && <div className="prompt-hint">💡 {promptHint}</div>}</div><button className="hint-btn" onClick={requestPrompt}>💡 Prompt me</button></div>}
+            {phase === "showing" && curAccuracy !== null && <div className="dock-row"><div className={`acc-ring ${curAccuracy === 100 ? "gold" : curAccuracy >= 75 ? "ok" : "low"}`}><span className="acc-num">{curAccuracy}%</span></div><div className="dock-col left">{curAccuracy === 100 ? <p className="bravo">✨ Word perfect!</p> : <><p className="you-said-lbl">You said:</p><p className="you-said">"{curSpoken || "(nothing recognised)"}"</p></>}</div></div>}
+            {phase === "complete" && (() => { const { medal, accuracy, prompts } = scoreMedal(lineResults); const M = MEDALS[medal]; return <div className="dock-row complete-row"><span className="medal-em">{M.emoji}</span><div className="dock-col left"><div className="medal-lbl" style={{ color: M.color }}>{M.label}</div><div className="dock-muted">Accuracy: {accuracy}% · Prompts: {prompts}</div>{medal === "gold" && <div className="gold-msg">🌟 Perfect score!</div>}</div><div className="complete-btns"><button className="go-btn sm" onClick={startRehearsal}>🔁 Again</button><button className="exit-btn" onClick={stopRehearsal}>← Setup</button></div></div> })()}
+            {(phase === "listening" || phase === "myLine") && <p className="dock-tip">Click any word for definition · Right-click for modern English</p>}
           </div>
         </div>
       )}
 
       {/* ══ WORD MODAL ══════════════════════════════════════════════════════ */}
-      {wModal&&(
-        <div className="overlay" onClick={()=>{setWModal(null);setWResult("")}}>
-          <div className="wmodal" onClick={e=>e.stopPropagation()}>
+      {wModal && (
+        <div className="overlay" onClick={() => { setWModal(null); setWResult("") }}>
+          <div className="wmodal" onClick={e => e.stopPropagation()}>
             <div className="wtabs">
-              <button className={`wtab${wModal.mode==="def"?" on":""}`} onClick={()=>{setWResult("");lookupWord(wModal.word,wModal.lineText,"def");setWModal(m=>({...m,mode:"def"}))}}>📖 Definition</button>
-              <button className={`wtab${wModal.mode==="mod"?" on":""}`} onClick={()=>{setWResult("");lookupWord(wModal.word,wModal.lineText,"mod");setWModal(m=>({...m,mode:"mod"}))}}>💬 Modern English</button>
+              <button className={`wtab${wModal.mode === "def" ? " on" : ""}`} onClick={() => { setWResult(""); lookupWord(wModal.word, wModal.lineText, "def"); setWModal(m => ({ ...m, mode: "def" })) }}>📖 Definition</button>
+              <button className={`wtab${wModal.mode === "mod" ? " on" : ""}`} onClick={() => { setWResult(""); lookupWord(wModal.word, wModal.lineText, "mod"); setWModal(m => ({ ...m, mode: "mod" })) }}>💬 Modern English</button>
             </div>
-            <h3 className="wmod-word">&#8220;{wModal.word}&#8221;</h3>
-            {wLoad?<p className="wmod-loading">Consulting the prompt book…</p>:<p className="wmod-result">{wResult}</p>}
-            <button className="wmod-close" onClick={()=>{setWModal(null);setWResult("")}}>Close</button>
+            <h3 className="wmod-word">"{wModal.word}"</h3>
+            {wLoad ? <p className="wmod-loading">Consulting the prompt book…</p> : <p className="wmod-result">{wResult}</p>}
+            <button className="wmod-close" onClick={() => { setWModal(null); setWResult("") }}>Close</button>
           </div>
         </div>
       )}
@@ -1084,7 +1033,8 @@ SCRIPT SECTION:\n${chunk.text}`
   )
 }
 
-const CSS=`
+// ─── STYLES ───────────────────────────────────────────────────────────────────
+const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Lora:ital,wght@0,500;1,400&display=swap');
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 .app{font-family:'Plus Jakarta Sans',system-ui,sans-serif;background:#F4F3F0;color:#1C1917;min-height:100vh}
@@ -1096,22 +1046,21 @@ const CSS=`
 .go-btn.sm{padding:.48rem 1.05rem;font-size:.82rem}
 .go-btn.full{width:100%;margin-top:.5rem}
 .upload-box{text-align:center;width:100%;max-width:480px}
-.key-card{background:#fff;border:1px solid #E7E5E4;border-radius:14px;padding:1.75rem;text-align:left;margin-top:.5rem}
-.key-title{font-size:1rem;font-weight:700;color:#1C1917;margin-bottom:.4rem}
-.key-body{font-size:.83rem;color:#78716C;line-height:1.6;margin-bottom:.9rem}
-.key-steps{font-size:.82rem;color:#44403C;line-height:1.85;padding-left:1.2rem;margin-bottom:1rem}
-.key-steps a{color:#6366F1;text-underline-offset:2px}
-.key-steps code{background:#F4F3F0;padding:.1rem .35rem;border-radius:4px;font-size:.8rem}
-.key-row{display:flex;gap:.5rem;margin-bottom:.65rem}
-.key-input{flex:1;background:#F4F3F0;border:1px solid #E7E5E4;border-radius:9px;padding:.6rem .85rem;font-family:'Plus Jakarta Sans',sans-serif;font-size:.88rem;color:#1C1917;outline:none;transition:border-color .18s}
-.key-input:focus{border-color:#1C1917;background:#fff}
-.key-note{font-size:.74rem;color:#A8A29E;line-height:1.5}
-.change-key-btn{background:transparent;border:none;color:#A8A29E;font-family:'Plus Jakarta Sans',sans-serif;font-size:.75rem;cursor:pointer;margin-top:.6rem;text-decoration:underline;text-decoration-style:dotted;transition:color .15s}
-.change-key-btn:hover{color:#44403C}
-.brand{margin-bottom:2.5rem}
+.brand{margin-bottom:2rem}
 .brand-icon{font-size:2.6rem;display:block;margin-bottom:.7rem}
 .brand-name{font-size:2.3rem;font-weight:700;letter-spacing:-.02em;margin-bottom:.3rem}
 .brand-sub{font-size:.92rem;color:#78716C}
+.key-card{background:#fff;border:1px solid #E7E5E4;border-radius:14px;padding:1.75rem;text-align:left;margin-top:.5rem}
+.key-title{font-size:1rem;font-weight:700;margin-bottom:.4rem}
+.key-body{font-size:.83rem;color:#78716C;line-height:1.6;margin-bottom:.9rem}
+.key-steps{font-size:.82rem;color:#44403C;line-height:1.85;padding-left:1.2rem;margin-bottom:1rem}
+.key-steps a{color:#6366F1}
+.key-steps strong{font-weight:600}
+.key-row{display:flex;gap:.5rem;margin-bottom:.65rem}
+.key-input{flex:1;background:#F4F3F0;border:1px solid #E7E5E4;border-radius:9px;padding:.6rem .85rem;font-family:'Plus Jakarta Sans',sans-serif;font-size:.88rem;color:#1C1917;outline:none;transition:border-color .18s}
+.key-input:focus{border-color:#1C1917;background:#fff}
+.key-note{font-size:.74rem;color:#A8A29E}
+.change-key-btn{background:transparent;border:none;color:#A8A29E;font-family:'Plus Jakarta Sans',sans-serif;font-size:.75rem;cursor:pointer;margin-top:.6rem;text-decoration:underline;text-decoration-style:dotted}
 .dz-wrap{display:flex;flex-direction:column;align-items:center;gap:.9rem;width:100%}
 .dz{border:1.5px dashed #D6D3CF;border-radius:14px;padding:2.5rem 2rem;cursor:pointer;text-align:center;background:#fff;width:100%;transition:border-color .2s,background .2s}
 .dz:hover,.dz.drag{border-color:#1C1917;background:#FAFAF8}
@@ -1127,26 +1076,21 @@ const CSS=`
 .proc-step{font-size:.87rem;color:#78716C;min-height:1.4em;margin-bottom:1.2rem;line-height:1.5}
 .prog-track{background:#F4F3F0;border-radius:999px;height:8px;overflow:hidden;margin-bottom:.35rem;position:relative}
 .prog-fill{height:100%;background:#1C1917;border-radius:999px;transition:width .6s ease}
-.prog-pulse{position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(90deg,transparent 0%,rgba(255,255,255,.35) 50%,transparent 100%);animation:shimmer 1.6s ease-in-out infinite;background-size:200% 100%}
+.prog-pulse{position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);animation:shimmer 1.6s ease-in-out infinite}
 @keyframes shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
 .prog-foot{display:flex;justify-content:space-between;align-items:center;min-height:1.2rem}
 .prog-pct{font-size:.78rem;color:#A8A29E;font-weight:500}
-.elapsed{font-size:.75rem;color:#78716C;font-style:italic;animation:fadein .5s ease}
-@keyframes fadein{from{opacity:0}to{opacity:1}}
-.proc-notice{margin-top:1.2rem;padding:.9rem 1.1rem;background:#FEF9EE;border:1px solid #F0E6C0;border-radius:10px;display:flex;flex-direction:column;gap:.3rem}
+.elapsed{font-size:.75rem;color:#78716C;font-style:italic}
+.proc-notice{margin-top:1.2rem;padding:.9rem 1.1rem;background:#FEF9EE;border:1px solid #F0E6C0;border-radius:10px;display:flex;flex-direction:column;gap:.3rem;font-size:.82rem;color:#92714A;line-height:1.65}
 .proc-err{margin-top:1.2rem;padding:.9rem 1rem;background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;font-size:.85rem;color:#991B1B;line-height:1.6}
 .badge{padding:.28rem .75rem;border-radius:999px;font-size:.75rem;font-weight:600}
-.badge.amber{background:#FEF3C7;color:#92400E}
-.badge.red{background:#FEE2E2;color:#991B1B}
-.badge.green{background:#D1FAE5;color:#065F46}
-.rev-screen{background:#F4F3F0;display:flex;flex-direction:column}
+.badge.amber{background:#FEF3C7;color:#92400E}.badge.red{background:#FEE2E2;color:#991B1B}.badge.green{background:#D1FAE5;color:#065F46}
+.rev-screen{background:#F4F3F0;display:flex;flex-direction:column;min-height:100vh}
 .rev-head{display:flex;justify-content:space-between;align-items:center;background:#fff;padding:1.1rem 1.75rem;border-bottom:1px solid #E7E5E4;flex-shrink:0;gap:1rem;flex-wrap:wrap}
-.rev-title{font-size:1.15rem;font-weight:700}
-.rev-sub{font-size:.82rem;color:#78716C;margin-top:.1rem}
+.rev-title{font-size:1.15rem;font-weight:700}.rev-sub{font-size:.82rem;color:#78716C;margin-top:.1rem}
 .rev-head-right{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
 .warn-bar{background:#FEF2F2;border-bottom:1px solid #FECACA;padding:.7rem 1.75rem;display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;font-size:.83rem;color:#7F1D1D;flex-shrink:0}
 .reup-btn{background:#fff;border:1px solid #FECACA;color:#DC2626;padding:.28rem .75rem;border-radius:7px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:.78rem;font-weight:600;white-space:nowrap}
-.reup-btn:hover{background:#FEE2E2}
 .rev-toolbar{display:flex;align-items:center;gap:1rem;flex-wrap:wrap;background:#fff;border-bottom:1px solid #E7E5E4;padding:.6rem 1.75rem;flex-shrink:0}
 .tab-group{display:flex;gap:.3rem}
 .tab{background:#F4F3F0;border:1px solid #E7E5E4;color:#78716C;padding:.3rem .82rem;border-radius:7px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:.8rem;font-weight:600;transition:all .18s}
@@ -1156,22 +1100,19 @@ const CSS=`
 .rev-scene-block{}
 .scene-label{font-size:.68rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#A8A29E;margin-bottom:.6rem;padding-bottom:.45rem;border-bottom:1px solid #E7E5E4}
 .rline{position:relative;border-radius:9px;border:1px solid transparent;transition:border-color .15s;margin-bottom:1px}
-.rline:hover{border-color:#E7E5E4}
-.rline.flag{background:#FFFBEB;border-color:#FCD34D}
-.rline.ed{background:#fff;border-color:#1C1917;box-shadow:0 0 0 3px rgba(28,25,23,.06)}
+.rline:hover{border-color:#E7E5E4}.rline.flag{background:#FFFBEB;border-color:#FCD34D}.rline.ed{background:#fff;border-color:#1C1917;box-shadow:0 0 0 3px rgba(28,25,23,.06)}
+.rline.drag-over{border-color:#6366F1!important;background:#F5F5FF!important;box-shadow:0 0 0 2px rgba(99,102,241,.25)}
 .rline-view{display:flex;align-items:flex-start;gap:.5rem;padding:.52rem .7rem;padding-right:0}
+.drag-grip{color:#D6D3CF;font-size:.9rem;cursor:grab;flex-shrink:0;user-select:none;padding:.52rem .4rem;transition:color .15s}
+.rline:hover .drag-grip{color:#A8A29E}.drag-grip:active{cursor:grabbing}
 .rline-main{display:flex;gap:.7rem;align-items:baseline;flex:1;flex-wrap:wrap}
 .rline-char{font-size:.68rem;font-weight:700;letter-spacing:.07em;color:#6366F1;min-width:90px;flex-shrink:0}
-.rline-text{font-size:.89rem;color:#44403C;line-height:1.55;flex:1}
-.rline-text.dir{font-style:italic;color:#A8A29E}
-.rline-text.empty{color:#D6D3CF;font-style:italic}
+.rline-text{font-size:.89rem;color:#44403C;line-height:1.55;flex:1}.rline-text.dir{font-style:italic;color:#A8A29E}.rline-text.empty{color:#D6D3CF;font-style:italic}
 .flag-pip{font-size:.72rem;color:#D97706;flex-shrink:0}
 .rline-btns{display:flex;gap:2px;flex-shrink:0;opacity:0;transition:opacity .15s;padding:.28rem}
 .rline:hover .rline-btns,.rline.flag .rline-btns{opacity:1}
 .ract{background:transparent;border:1px solid transparent;color:#A8A29E;width:26px;height:26px;border-radius:6px;cursor:pointer;font-size:.78rem;display:flex;align-items:center;justify-content:center;transition:all .15s}
-.ract:hover{background:#F4F3F0;border-color:#E7E5E4;color:#1C1917}
-.ract.danger:hover{background:#FEE2E2;border-color:#FECACA;color:#DC2626}
-.ract:disabled{opacity:.35;cursor:not-allowed}
+.ract:hover{background:#F4F3F0;border-color:#E7E5E4;color:#1C1917}.ract.danger:hover{background:#FEE2E2;border-color:#FECACA;color:#DC2626}.ract:disabled{opacity:.35;cursor:not-allowed}
 .rline-form{padding:.7rem;display:flex;flex-direction:column;gap:.45rem}
 .form-char{background:#F4F3F0;border:1px solid #E7E5E4;border-radius:7px;padding:.38rem .7rem;font-family:'Plus Jakarta Sans',sans-serif;font-size:.75rem;font-weight:700;letter-spacing:.06em;color:#6366F1;width:100%;outline:none}
 .form-char:focus{border-color:#6366F1;background:#fff}
@@ -1179,25 +1120,18 @@ const CSS=`
 .form-text:focus{border-color:#1C1917;background:#fff}
 .form-acts{display:flex;gap:.45rem;align-items:center;flex-wrap:wrap}
 .voice-btn{background:#F4F3F0;border:1px solid #E7E5E4;color:#44403C;padding:.34rem .78rem;border-radius:7px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:.8rem;font-weight:600;transition:all .18s}
-.voice-btn:hover:not(:disabled){border-color:#1C1917}
-.voice-btn:disabled{opacity:.5;cursor:not-allowed}
+.voice-btn:hover:not(:disabled){border-color:#1C1917}.voice-btn:disabled{opacity:.5;cursor:not-allowed}
 .cancel-btn{background:transparent;border:none;color:#A8A29E;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:.82rem;padding:.34rem .45rem;transition:color .15s}
 .cancel-btn:hover{color:#1C1917}
-.between-btn{display:block;width:100%;background:transparent;border:none;color:transparent;font-size:.7rem;cursor:pointer;padding:2px 0;text-align:center;transition:all .15s;line-height:1}
-.rline:hover~.between-btn,.between-btn:hover{color:#D6D3CF}
-.between-btn:hover{color:#A8A29E}
-.drag-grip{color:#D6D3CF;font-size:.9rem;cursor:grab;padding:.52rem .5rem;flex-shrink:0;user-select:none;transition:color .15s}
-.rline:hover .drag-grip{color:#A8A29E}
-.drag-grip:active{cursor:grabbing}
-.rline.drag-over{border-color:#6366F1 !important;background:#F5F5FF !important;box-shadow:0 0 0 2px rgba(99,102,241,.25)}
+.between-btn{display:block;width:100%;background:transparent;border:none;color:transparent;font-size:.7rem;cursor:pointer;padding:2px 0;text-align:center;transition:color .15s;line-height:1}
+.rline:hover+.between-btn,.between-btn:hover{color:#D6D3CF}
 .end-btn{background:transparent;border:1px dashed #D6D3CF;color:#A8A29E;border-radius:8px;padding:.42rem;cursor:pointer;width:100%;font-family:'Plus Jakarta Sans',sans-serif;font-size:.78rem;font-weight:600;margin-top:.4rem;transition:all .18s}
 .end-btn:hover{border-color:#A8A29E;color:#44403C;background:#fff}
 .rev-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1.2rem;padding:3rem;font-size:.98rem;color:#78716C}
 .step-body{flex:1;display:flex;flex-direction:column;align-items:center;padding:2rem 1.5rem;gap:1.2rem;overflow-y:auto}
 .step-nav{display:flex;align-items:center;gap:.9rem}
 .snav{background:#fff;border:1px solid #E7E5E4;color:#44403C;padding:.4rem .95rem;border-radius:8px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:.82rem;font-weight:600;transition:all .18s}
-.snav:hover:not(:disabled){border-color:#1C1917;color:#1C1917}
-.snav:disabled{opacity:.35;cursor:not-allowed}
+.snav:hover:not(:disabled){border-color:#1C1917;color:#1C1917}.snav:disabled{opacity:.35;cursor:not-allowed}
 .sctr{font-size:.82rem;font-weight:600;color:#78716C;min-width:54px;text-align:center}
 .step-card{background:#fff;border:1px solid #E7E5E4;border-radius:14px;padding:1.65rem;width:100%;max-width:640px;display:flex;flex-direction:column;gap:.85rem}
 .step-scene-tag{font-size:.67rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#A8A29E}
@@ -1252,12 +1186,9 @@ const CSS=`
 .skip-toggle input{accent-color:#1C1917;cursor:pointer}
 .scene-list{display:flex;flex-direction:column;gap:.32rem;max-height:250px;overflow-y:auto;margin-bottom:.9rem}
 .scene-btn{background:#FAFAF8;border:1px solid #E7E5E4;color:#44403C;padding:.62rem .88rem;border-radius:9px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:.85rem;font-weight:500;display:flex;justify-content:space-between;align-items:center;transition:all .18s;text-align:left;width:100%}
-.scene-btn:hover{border-color:#A8A29E;color:#1C1917}
-.scene-btn.on{background:#1C1917;border-color:#1C1917;color:#fff}
-.scene-name{flex:1;text-align:left}
-.scene-meta{font-size:.74rem;opacity:.65;white-space:nowrap;margin-left:.5rem}
-.my-ct{color:#A5B4FC}
-.scene-btn.on .my-ct{color:#C7D2FE}
+.scene-btn:hover{border-color:#A8A29E;color:#1C1917}.scene-btn.on{background:#1C1917;border-color:#1C1917;color:#fff}
+.scene-name{flex:1;text-align:left}.scene-meta{font-size:.74rem;opacity:.65;white-space:nowrap;margin-left:.5rem}
+.my-ct{color:#A5B4FC}.scene-btn.on .my-ct{color:#C7D2FE}
 .hist-box{margin:.85rem 0 .95rem;padding-top:.85rem;border-top:1px solid #F0EEE9}
 .hist-row{display:flex;gap:.62rem;align-items:center;padding:.26rem 0;font-size:.82rem;border-bottom:1px solid #F4F3F0}
 .hist-scene{flex:1;color:#78716C;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.78rem}
@@ -1270,23 +1201,17 @@ const CSS=`
 .reh-pos{color:#4B5563;font-size:.78rem;font-weight:500}
 .script-pane{flex:1;overflow-y:auto;padding:1.2rem 1.65rem;display:flex;flex-direction:column;gap:.08rem}
 .sl{display:flex;gap:.85rem;align-items:baseline;padding:.46rem .7rem;border-radius:8px;opacity:.24;transition:opacity .35s,background .35s}
-.sl.past{opacity:.14}
-.sl.cur{opacity:1;background:rgba(255,255,255,.04)}
-.sl.cur.mine{background:rgba(99,102,241,.1)}
-.sl.dir{font-style:italic;font-size:.84rem;color:#6B7280}
+.sl.past{opacity:.14}.sl.cur{opacity:1;background:rgba(255,255,255,.04)}.sl.cur.mine{background:rgba(99,102,241,.1)}.sl.dir{font-style:italic;font-size:.84rem;color:#6B7280}
 .sl-char{font-size:.67rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6366F1;min-width:94px;flex-shrink:0;padding-top:3px}
-.sl-text{font-size:.97rem;line-height:1.7;flex:1;color:#E5E7EB}
-.sl.cur .sl-text{color:#F9FAFB}
+.sl-text{font-size:.97rem;line-height:1.7;flex:1;color:#E5E7EB}.sl.cur .sl-text{color:#F9FAFB}
 .sl-pct{font-size:.75rem;font-weight:600;margin-left:auto;flex-shrink:0}
 .sl-pct.gold{color:#FBBF24}.sl-pct.ok{color:#34D399}.sl-pct.low{color:#F87171}
 .sw.click{cursor:pointer}.sw.click:hover{color:#A5B4FC;text-decoration:underline;text-decoration-style:dotted}
 .sw.ok{color:#34D399}.sw.bad{color:#F87171;text-decoration:line-through}
 .dock{flex-shrink:0;min-height:116px;background:#1F2937;border-top:1px solid #374151;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:1.1rem 2rem;gap:.48rem;text-align:center}
 .dock-row{display:flex;align-items:center;gap:.95rem;width:100%;justify-content:center;flex-wrap:wrap}
-.dock-col{display:flex;flex-direction:column;gap:.18rem}
-.dock-col.left{text-align:left}
-.dock-muted{color:#6B7280;font-size:.87rem}
-.dock-who{font-weight:700;color:#A5B4FC;font-size:.9rem}
+.dock-col{display:flex;flex-direction:column;gap:.18rem}.dock-col.left{text-align:left}
+.dock-muted{color:#6B7280;font-size:.87rem}.dock-who{font-weight:700;color:#A5B4FC;font-size:.9rem}
 .waves{display:flex;align-items:center;gap:3px;height:24px}
 .waves span{display:block;width:3px;border-radius:2px;background:#6366F1;animation:wave .85s ease-in-out infinite}
 @keyframes wave{0%,100%{transform:scaleY(.2)}50%{transform:scaleY(1)}}
@@ -1324,4 +1249,47 @@ const CSS=`
 .wmod-close{margin-top:1.2rem;width:100%;background:#F4F3F0;border:1px solid #E7E5E4;color:#78716C;padding:.5rem;border-radius:9px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:.84rem;font-weight:600;transition:all .18s}
 .wmod-close:hover{background:#E7E5E4;color:#1C1917}
 ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#D6D3CF;border-radius:2px}
+
+/* ── AUTH ── */
+.auth-box{text-align:center;width:100%;max-width:400px}
+.auth-card{background:#fff;border:1px solid #E7E5E4;border-radius:14px;padding:1.75rem;text-align:left;margin-top:1.5rem;display:flex;flex-direction:column;gap:.75rem}
+.auth-tabs{display:flex;gap:.35rem;margin-bottom:.25rem}
+.auth-tab{flex:1;background:#F4F3F0;border:1px solid #E7E5E4;color:#78716C;padding:.42rem;border-radius:8px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:.85rem;font-weight:600;transition:all .18s}
+.auth-tab.on{background:#1C1917;border-color:#1C1917;color:#fff}
+.auth-input{background:#F4F3F0;border:1px solid #E7E5E4;border-radius:9px;padding:.65rem .9rem;font-family:'Plus Jakarta Sans',sans-serif;font-size:.9rem;color:#1C1917;outline:none;width:100%;transition:border-color .18s}
+.auth-input:focus{border-color:#1C1917;background:#fff}
+.auth-err{font-size:.82rem;color:#DC2626;line-height:1.5}
+.auth-err.ok{color:#16A34A}
+
+/* ── LIBRARY ── */
+.lib-screen{background:#F4F3F0;min-height:100vh;display:flex;flex-direction:column}
+.lib-head{display:flex;justify-content:space-between;align-items:center;background:#fff;padding:1.1rem 2rem;border-bottom:1px solid #E7E5E4;flex-shrink:0;gap:1rem;flex-wrap:wrap}
+.lib-title{font-size:1.2rem;font-weight:700;color:#1C1917}
+.lib-sub{font-size:.8rem;color:#A8A29E;margin-top:.1rem;font-weight:500;letter-spacing:.04em;text-transform:uppercase}
+.lib-head-right{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}
+.lib-user{font-size:.8rem;color:#78716C;font-weight:500}
+.signout-btn{background:transparent;border:1px solid #E7E5E4;color:#78716C;padding:.38rem .85rem;border-radius:8px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:.8rem;font-weight:600;transition:all .18s}
+.signout-btn:hover{border-color:#1C1917;color:#1C1917}
+.lib-key-bar{background:#FEF9EE;border-bottom:1px solid #F0E6C0;padding:.85rem 2rem;flex-shrink:0}
+.lib-key-inner{max-width:600px;margin:0 auto;display:flex;align-items:center;gap:1rem;flex-wrap:wrap}
+.lib-key-label{font-size:.83rem;color:#92714A;font-weight:500;flex-shrink:0}
+.lib-key-inner .key-row{flex:1}
+.lib-body{flex:1;padding:2rem;max-width:1020px;width:100%;margin:0 auto}
+.lib-loading{color:#A8A29E;font-size:.9rem;text-align:center;padding:2rem}
+.lib-empty{text-align:center;padding:4rem 2rem;display:flex;flex-direction:column;align-items:center;gap:.75rem}
+.lib-empty-icon{font-size:3rem}
+.lib-empty-title{font-size:1.1rem;font-weight:700;color:#1C1917}
+.lib-empty-sub{font-size:.88rem;color:#A8A29E}
+.lib-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:1rem}
+.lib-card{background:#fff;border:1px solid #E7E5E4;border-radius:12px;overflow:hidden;transition:border-color .18s,box-shadow .18s;display:flex;flex-direction:column}
+.lib-card:hover{border-color:#A8A29E;box-shadow:0 4px 16px rgba(0,0,0,.06)}
+.lib-card.active{border-color:#6366F1;box-shadow:0 0 0 3px rgba(99,102,241,.12)}
+.lib-card-body{padding:1.1rem 1.1rem .75rem;cursor:pointer;flex:1}
+.lib-card-title{font-size:.95rem;font-weight:700;color:#1C1917;font-family:'Lora',serif;font-style:italic;margin-bottom:.35rem;line-height:1.35}
+.lib-card-date{font-size:.75rem;color:#A8A29E}
+.lib-card-foot{display:flex;justify-content:space-between;align-items:center;padding:.6rem 1rem;border-top:1px solid #F4F3F0;background:#FAFAF8}
+.lib-open-btn{background:transparent;border:none;color:#6366F1;font-family:'Plus Jakarta Sans',sans-serif;font-size:.8rem;font-weight:700;cursor:pointer;padding:0;transition:color .15s}
+.lib-open-btn:hover{color:#4F46E5}
+.lib-del-btn{background:transparent;border:none;color:#D6D3CF;cursor:pointer;font-size:.85rem;padding:0;transition:color .15s}
+.lib-del-btn:hover{color:#DC2626}
 `
