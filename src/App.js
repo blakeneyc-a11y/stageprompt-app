@@ -423,10 +423,11 @@ SCRIPT SECTION:\n${chunk.text}`
         if(pd&&Array.isArray(pd.lines)&&pd.lines.length>0){
           allParsedLines.push(...pd.lines.map(l=>({...l,_ci:ci})))
         } else {
-          allParsedLines.push({character:null,text:`[${chunk.label} could not be parsed — please fix in Review]`,isStageDirection:true,scene:chunk.startScene,flagged:true,_ci:ci})
+          // Store raw response snippet for diagnostics
+          allParsedLines.push({character:null,text:`[${chunk.label} parse failed — raw: ${pRaw.slice(0,120)}]`,isStageDirection:true,scene:chunk.startScene,flagged:true,_ci:ci})
         }
       }catch(e){
-        allParsedLines.push({character:null,text:`[Parse error: ${chunk.label} — ${e.message}]`,isStageDirection:true,scene:chunk.startScene,flagged:true,_ci:ci})
+        allParsedLines.push({character:null,text:`[API error on ${chunk.label}: ${e.message}]`,isStageDirection:true,scene:chunk.startScene,flagged:true,_ci:ci})
       }
     }
 
@@ -494,7 +495,10 @@ SCRIPT SECTION:\n${chunk.text}`
 
     // Only fail if we truly got zero dialogue lines
     if(dialogueLines.length===0){
-      setProcErr("No dialogue was detected. Please check the file is a play script and try again."); return
+      // Show first error message from parsed lines to help diagnose
+      const firstErr=allL.find(l=>l.text?.startsWith("["))
+      const diag=firstErr?` (${firstErr.text.slice(0,120)})`:" — all chunks returned empty."
+      setProcErr(`No dialogue was detected.${diag} Please try again or upload a clearer file.`); return
     }
 
     setProcStep(pct>50?`⚠ ${pct}% of lines need review.`:flagged.length?`Done — ${allL.length} lines, ${flagged.length} flagged for review.`:`Script read! ${dialogueLines.length} lines · ${charList.length} characters · ${scenes.length} section${scenes.length!==1?"s":""}`)
