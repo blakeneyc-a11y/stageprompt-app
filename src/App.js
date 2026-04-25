@@ -1,4 +1,3 @@
-// updated
 import React, { useState, useEffect, useRef, useCallback } from "react"
 import { createClient } from "@supabase/supabase-js"
 
@@ -191,7 +190,7 @@ function DropZone({ onProcess }) {
 }
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
-export default function StagePrompt() {
+export default function OffBook() {
   // ── Navigation ───────────────────────────────────────────────────────────
   const [screen, setScreen] = useState(supabase ? "auth" : "upload")
 
@@ -405,9 +404,9 @@ export default function StagePrompt() {
       catch (e) { rawTexts.push(`[Pages ${ps}-${pe} error: ${e.message}]`) }
     }
 
-    // Step 3: PDFs — 4-pass extraction for scripts up to 150 pages
+    // Step 3: PDFs — smart multi-pass, stops early when script is complete
     for (let i = 0; i < pdfs.length; i++) {
-      setProcStep(`Reading PDF${pdfs.length > 1 ? ` ${i + 1}/${pdfs.length}` : ""} — this may take several minutes for long scripts…`)
+      setProcStep(`Reading PDF${pdfs.length > 1 ? ` ${i + 1}/${pdfs.length}` : ""}…`)
       setProcProg(44 + Math.round((i / Math.max(pdfs.length, 1)) * 12))
       const b64 = await toBase64(pdfs[i])
       const pdfMsg = txt => [{ role:"user", content:[
@@ -415,36 +414,35 @@ export default function StagePrompt() {
         { type:"text", text:txt }
       ]}]
 
-      const passes = [
-        "Extract the FIRST QUARTER of this theatre play script PDF — from the very beginning up to roughly page 25. Preserve character names (in CAPS on their own line), stage directions, act/scene headings, and all dialogue verbatim. Do not summarise or skip anything.",
-        null, // filled in dynamically
-        null,
-        null
-      ]
       let fullPdfText = ""
+      const MAX_PASSES = 4
 
-      for (let p = 0; p < 4; p++) {
-        setProcStep(`Reading PDF — section ${p+1} of 4…`)
-        await pause(6000)
-        let prompt
-        if (p === 0) {
-          prompt = passes[0]
-        } else {
-          const lastFew = fullPdfText.trim().split("\n").filter(l=>l.trim()).slice(-8).join("\n")
-          const quarter = p===1?"second quarter (roughly pages 26–50)":p===2?"third quarter (roughly pages 51–75)":"final quarter (roughly pages 76 to the end)"
-          prompt = `This is a theatre play script PDF. I have already extracted up to:\n\n"${lastFew}"\n\nPlease extract the ${quarter} — all text that appears AFTER the above excerpt. Include every scene, every line of dialogue, every stage direction. If there is genuinely no more content after the above point, reply only: DONE`
-        }
+      for (let p = 0; p < MAX_PASSES; p++) {
+        setProcStep(`Reading PDF — pass ${p+1}${p > 0 ? " (continuing…)" : ""}`)
+        await pause(5000) // 5s between PDF passes
+
+        const prompt = p === 0
+          ? "Extract ALL text from this theatre play script PDF from the very beginning. Preserve character names (CAPS on their own line), stage directions, act/scene headings, all dialogue verbatim. Do not skip or summarise anything."
+          : `This is a theatre play script. I have extracted up to:\n\n"${fullPdfText.trim().split("\n").filter(l=>l.trim()).slice(-6).join("\n")}"\n\nExtract ALL REMAINING text after that point to the very end of the document. If there is nothing more, reply only: DONE`
+
         try {
           const result = await askClaude(pdfMsg(prompt), "Specialist script OCR. Extract all text faithfully.", 16000)
           if (!result || result.trim().length < 50 || result.trim().toUpperCase().startsWith("DONE")) break
-          // Check for duplicate content — stop if we're looping
           if (fullPdfText.length > 100 && fullPdfText.includes(result.trim().slice(0, 60))) break
           fullPdfText += (fullPdfText ? "\n\n" : "") + result
           rawTexts.push(result)
+
+          // Smart early exit: if we can see the end of the play, stop
+          const lower = fullPdfText.toLowerCase()
+          const hasEnding = lower.includes("epilogue") || lower.includes("end of play") ||
+            lower.includes("curtain") || lower.includes("blackout") ||
+            (meta.sceneHeadings.length > 0 &&
+              meta.sceneHeadings.slice(-1)[0] &&
+              lower.includes(meta.sceneHeadings.slice(-1)[0].toLowerCase()))
+          if (hasEnding && p >= 1) { setProcStep("PDF fully extracted ✓"); break }
         } catch(e) {
           rawTexts.push(`[PDF pass ${p+1} error: ${e.message}]`)
-          await pause(8000) // longer wait after rate limit error
-          break
+          await pause(6000); break
         }
       }
     }
@@ -452,21 +450,17 @@ export default function StagePrompt() {
     const fullText = rawTexts.join("\n\n").trim()
     if (!fullText) { setProcErr("No text could be extracted. Please try a clearer image or digital PDF."); return }
 
-    // Preview of extracted text
-    setProcStep(`Extracted: "${fullText.slice(0, 100).replace(/\n/g, " ")}…"`); setProcProg(57)
-    await pause(2000)
-
     // Step 4: Multi-pass character & heading extraction
     setProcStep("Identifying all characters and scenes…"); setProcProg(59)
     let meta = { title: "Untitled Play", characters: [], sceneHeadings: [] }
     try {
-      const mRaw = await askClaude([{ role: "user", content: `Read this play script and find: (1) the play title, (2) EVERY character who speaks, (3) ALL section headings (Prologue, Scene 1 … Scene N, Epilogue etc.)\nReturn ONLY valid JSON:\n{"title":"Play Title","characters":["NAME1","NAME2"],"sceneHeadings":["Prologue","Scene 1"]}\nSCRIPT:\n${fullText.slice(0, 40000)}` }], "Theatre analyst. Return only valid compact JSON.", 3000); await pause(3000)
+      const mRaw = await askClaude([{ role: "user", content: `Read this play script and find: (1) the play title, (2) EVERY character who speaks, (3) ALL section headings (Prologue, Scene 1 … Scene N, Epilogue etc.)\nReturn ONLY valid JSON:\n{"title":"Play Title","characters":["NAME1","NAME2"],"sceneHeadings":["Prologue","Scene 1"]}\nSCRIPT:\n${fullText.slice(0, 40000)}` }], "Theatre analyst. Return only valid compact JSON.", 3000); await pause(6000)
       const m = safeJSON(mRaw); if (m && Array.isArray(m.characters) && m.characters.length > 0) meta = m
     } catch {}
     if (fullText.length > 40000) {
       try {
         setProcStep("Scanning for additional characters…"); setProcProg(61); await pause(500)
-        const mRaw2 = await askClaude([{ role: "user", content: `From this second portion of the same play, find any ADDITIONAL speaking characters not in [${meta.characters.join(", ")}] and any additional scene headings.\nReturn ONLY JSON: {"additionalCharacters":[],"additionalHeadings":[]}\nSCRIPT:\n${fullText.slice(40000, 90000)}` }], "Theatre analyst. Return only valid compact JSON.", 2000); await pause(3000)
+        const mRaw2 = await askClaude([{ role: "user", content: `From this second portion of the same play, find any ADDITIONAL speaking characters not in [${meta.characters.join(", ")}] and any additional scene headings.\nReturn ONLY JSON: {"additionalCharacters":[],"additionalHeadings":[]}\nSCRIPT:\n${fullText.slice(40000, 90000)}` }], "Theatre analyst. Return only valid compact JSON.", 2000); await pause(6000)
         const m2 = safeJSON(mRaw2)
         if (m2) {
           if (Array.isArray(m2.additionalCharacters)) meta.characters = [...new Set([...meta.characters, ...m2.additionalCharacters])]
@@ -475,11 +469,11 @@ export default function StagePrompt() {
       } catch {}
     }
 
-    // Step 5: Chunked parsing with safe advance
+    // Step 5: Chunked parsing — larger chunks = fewer API calls
     setProcStep("Splitting script into sections…"); setProcProg(64)
     const SCENE_RE = /(?:^|\n)((?:PROLOGUE|EPILOGUE|(?:ACT\s*\d+[\s,]*)?SCENE\s*\d+|Scene\s+\d+|Prologue|Epilogue)[^\n]*)/gi
     const hmatches = [...fullText.matchAll(SCENE_RE)]
-    const MAX_CHUNK = 8000, MIN_ADV = 5000
+    const MAX_CHUNK = 12000, MIN_ADV = 7000  // larger chunks = fewer calls
     let chunks = []
     if (hmatches.length >= 2) {
       if (hmatches[0].index > 200) chunks.push({ label: "Opening", text: fullText.slice(0, Math.min(hmatches[0].index + 300, MAX_CHUNK)), scene: meta.sceneHeadings[0] || "Prologue" })
@@ -510,12 +504,12 @@ export default function StagePrompt() {
       setProcStep(`Parsing ${ch.label} — ${ci + 1} of ${chunks.length}…`)
       setProcProg(64 + Math.round((ci / chunks.length) * 29))
       try {
-        const pRaw = await askClaude([{ role: "user", content: `Parse this theatre play script section into JSON.\nKnown characters: ${knownChars}\nKnown sections: ${knownScenes}\nCurrent section: ${ch.scene}\n\nReturn ONLY this JSON (no markdown):\n{"lines":[{"character":"NAME","text":"exact dialogue","isStageDirection":false,"scene":"${ch.scene}","flagged":false},{"character":null,"text":"(Stage direction)","isStageDirection":true,"scene":"${ch.scene}","flagged":false}]}\n\nRULES:\n- Include EVERY spoken line including short ones ("Yes." "No!" "Help!")\n- Character name formats: NAME alone on a line, NAME., NAME:\n- Update "scene" field when a new heading appears\n- flagged:true ONLY for genuinely illegible text\n- DO NOT skip or omit any dialogue\n\nSCRIPT:\n${ch.text}` }], "Expert theatre script parser. Include every single line.", 7000)
+        const pRaw = await askClaude([{ role: "user", content: `Parse this theatre play script section into JSON.\nKnown characters: ${knownChars}\nKnown sections: ${knownScenes}\nCurrent section: ${ch.scene}\n\nReturn ONLY this JSON (no markdown):\n{"lines":[{"character":"NAME","text":"exact dialogue","isStageDirection":false,"scene":"${ch.scene}","flagged":false},{"character":null,"text":"(Stage direction)","isStageDirection":true,"scene":"${ch.scene}","flagged":false}]}\n\nRULES:\n- Include EVERY spoken line including short ones ("Yes." "No!" "Help!")\n- Character name formats: NAME alone on a line, NAME., NAME:\n- Update "scene" field when a new heading appears\n- flagged:true ONLY for genuinely illegible text\n- DO NOT skip or omit any dialogue\n\nSCRIPT:\n${ch.text}` }], "Expert theatre script parser. Include every single line.", 8000)
         const pd = safeJSON(pRaw)
         if (pd && Array.isArray(pd.lines) && pd.lines.length > 0) allLines.push(...pd.lines.map(l => ({ ...l, _ci: ci })))
         else allLines.push({ character: null, text: `[${ch.label} parse failed: ${pRaw.slice(0, 80)}]`, isStageDirection: true, scene: ch.scene, flagged: true, _ci: ci })
       } catch (e) { allLines.push({ character: null, text: `[API error: ${ch.label} — ${e.message}]`, isStageDirection: true, scene: ch.scene, flagged: true, _ci: ci }) }
-      if (ci < chunks.length - 1) await pause(5000)
+      if (ci < chunks.length - 1) await pause(8000) // 8s keeps under 30k tokens/min limit
     }
 
     // Dedup
@@ -527,20 +521,31 @@ export default function StagePrompt() {
       if (!deduped.slice(-10).some(l => `${l.character}||${(l.text || "").trim().slice(0, 80)}` === key)) deduped.push(rest)
     }
 
-    // Group into scenes with fuzzy matching
-    const fuzzy = s => s.toLowerCase().replace(/[^a-z0-9]/g, "")
+    // Group into scenes — STRICT insertion order to prevent jumbling
+    // Lines come out of the parser in document order; preserve that order exactly.
     const sceneMap = new Map(), sceneOrder = []
     for (const line of deduped) {
       const sc = ((line.scene || "").trim().replace(/\s+/g, " ")) || "Scene 1"
       if (!sceneMap.has(sc)) { sceneMap.set(sc, []); sceneOrder.push(sc) }
       sceneMap.get(sc).push(line)
     }
+
+    // Only reorder if meta headings are in a clearly different order AND we trust them
+    // (i.e. we found all meta headings in the parsed output). Otherwise keep parse order.
     let orderedNames = sceneOrder
     if (meta.sceneHeadings?.length > 0) {
-      const mapped = [], ms = new Set(meta.sceneHeadings.map(s => s.trim()))
-      for (const mh of meta.sceneHeadings) { const f = sceneOrder.find(s => s === mh.trim()) || sceneOrder.find(s => fuzzy(s) === fuzzy(mh)); if (f && !mapped.includes(f)) mapped.push(f) }
-      orderedNames = [...mapped, ...sceneOrder.filter(s => !ms.has(s))]
+      const fuzzy = s => s.toLowerCase().replace(/[^a-z0-9]/g, "")
+      const metaMapped = meta.sceneHeadings
+        .map(mh => sceneOrder.find(s => s === mh.trim()) || sceneOrder.find(s => fuzzy(s) === fuzzy(mh)))
+        .filter(Boolean)
+      // Only use meta order if we matched most of the parsed scenes (avoids partial reorder)
+      if (metaMapped.length >= Math.floor(sceneOrder.length * 0.7)) {
+        const metaSet = new Set(metaMapped)
+        orderedNames = [...metaMapped, ...sceneOrder.filter(s => !metaSet.has(s))]
+      }
+      // Otherwise keep sceneOrder (parse order) which is correct
     }
+
     let scenes = orderedNames.filter(t => sceneMap.has(t)).map(title => ({ title, lines: sceneMap.get(title) }))
     if (!scenes.length && deduped.length > 0) scenes = [{ title: "Scene 1", lines: deduped }]
     if (!scenes.length) scenes = [{ title: "Scene 1", lines: [{ character: null, text: "No lines found. Use Review to add lines manually.", isStageDirection: true, flagged: true }] }]
@@ -667,7 +672,7 @@ export default function StagePrompt() {
           <div className="auth-box">
             <div className="brand">
               <span className="brand-icon">🎭</span>
-              <h1 className="brand-name">StagePrompt</h1>
+              <h1 className="brand-name">OffBook</h1>
               <p className="brand-sub">Your AI line-learning companion</p>
             </div>
             <div className="auth-card">
@@ -691,7 +696,7 @@ export default function StagePrompt() {
         <div className="screen lib-screen">
           <header className="lib-head">
             <div>
-              <h1 className="lib-title">🎭 StagePrompt</h1>
+              <h1 className="lib-title">🎭 OffBook</h1>
               <p className="lib-sub">My Script Library</p>
             </div>
             <div className="lib-head-right">
@@ -749,7 +754,7 @@ export default function StagePrompt() {
           <div className="upload-box">
             <div className="brand">
               <span className="brand-icon">🎭</span>
-              <h1 className="brand-name">StagePrompt</h1>
+              <h1 className="brand-name">OffBook</h1>
               <p className="brand-sub">Upload a new script</p>
             </div>
             {supabase && user && (
@@ -758,7 +763,7 @@ export default function StagePrompt() {
             {!keyReady ? (
               <div className="key-card">
                 <h2 className="key-title">Enter your Anthropic API key</h2>
-                <p className="key-body">StagePrompt uses Claude AI to read your script. You need an API key from Anthropic — you only enter this once per session.</p>
+                <p className="key-body">OffBook uses Claude AI to read your script. You need an API key from Anthropic — you only enter this once per session.</p>
                 <ol className="key-steps">
                   <li>Go to <a href="https://console.anthropic.com" target="_blank" rel="noreferrer">console.anthropic.com</a> and sign up</li>
                   <li>Click <strong>API Keys</strong> → <strong>Create Key</strong></li>
@@ -871,7 +876,26 @@ export default function StagePrompt() {
                             </div>
                           ) : (
                             <div className="rline-form">
-                              <input className="form-char" placeholder="CHARACTER NAME (blank = stage direction)" value={editChar} onChange={e => setEditChar(e.target.value)} />
+                              <div className="char-picker-wrap">
+                                <input className="form-char" placeholder="CHARACTER NAME (blank = stage direction)"
+                                  value={editChar}
+                                  onChange={e => setEditChar(e.target.value.toUpperCase())} />
+                                {script?.characters.length > 0 && (
+                                  <div className="char-chips">
+                                    <span className="char-chips-label">Quick pick:</span>
+                                    {script.characters.map(ch => (
+                                      <button key={ch.name} className={`char-chip-btn${editChar===ch.name?" active":""}`}
+                                        onClick={() => setEditChar(ch.name)}>
+                                        {ch.name}
+                                      </button>
+                                    ))}
+                                    <button className="char-chip-btn stage-dir-btn"
+                                      onClick={() => setEditChar("")}>
+                                      Stage direction
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
                               <textarea className="form-text" rows={3} value={editText} onChange={e => setEditText(e.target.value)} />
                               <div className="form-acts">
                                 <button className="voice-btn" onClick={() => voiceCorrect(si, li)} disabled={isVoiceCorr}>{isVoiceCorr ? "🎙 Listening…" : "🎙 Speak"}</button>
@@ -1117,6 +1141,14 @@ const CSS = `
 .rline-form{padding:.7rem;display:flex;flex-direction:column;gap:.45rem}
 .form-char{background:#F4F3F0;border:1px solid #E7E5E4;border-radius:7px;padding:.38rem .7rem;font-family:'Plus Jakarta Sans',sans-serif;font-size:.75rem;font-weight:700;letter-spacing:.06em;color:#6366F1;width:100%;outline:none}
 .form-char:focus{border-color:#6366F1;background:#fff}
+.char-picker-wrap{display:flex;flex-direction:column;gap:.4rem}
+.char-chips{display:flex;flex-wrap:wrap;gap:.3rem;align-items:center}
+.char-chips-label{font-size:.67rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#A8A29E;flex-shrink:0;margin-right:.1rem}
+.char-chip-btn{background:#F4F3F0;border:1px solid #E7E5E4;color:#44403C;padding:.18rem .55rem;border-radius:999px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:.72rem;font-weight:600;transition:all .15s;white-space:nowrap}
+.char-chip-btn:hover{background:#E7E5E4;border-color:#A8A29E}
+.char-chip-btn.active{background:#6366F1;border-color:#6366F1;color:#fff}
+.char-chip-btn.stage-dir-btn{color:#A8A29E;border-style:dashed}
+.char-chip-btn.stage-dir-btn:hover{background:#F4F3F0;color:#44403C;border-style:solid}
 .form-text{background:#F4F3F0;border:1px solid #E7E5E4;border-radius:7px;padding:.52rem .7rem;font-family:'Plus Jakarta Sans',sans-serif;font-size:.89rem;color:#1C1917;width:100%;resize:vertical;outline:none;line-height:1.55}
 .form-text:focus{border-color:#1C1917;background:#fff}
 .form-acts{display:flex;gap:.45rem;align-items:center;flex-wrap:wrap}
