@@ -492,6 +492,42 @@ function BookAnimation() {
 }
 
 
+// ─── API ──────────────────────────────────────────────────────────────────────
+const API   = "https://api.anthropic.com/v1/messages"
+const MODEL = "claude-sonnet-4-6"
+const pause = ms => new Promise(r => setTimeout(r, ms))
+
+// API key — stored at module level, set from UI via _key = value
+let _key = ""
+
+async function askClaude(messages, system = "", maxTokens = 2000) {
+  const headers = {
+    "Content-Type": "application/json",
+    "anthropic-version": "2023-06-01",
+    "anthropic-dangerous-direct-browser-access": "true"
+  }
+  if (_key) headers["x-api-key"] = _key
+
+  const res = await fetch(API, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, system, messages })
+  })
+
+  if (!res.ok) {
+    let errMsg = `HTTP ${res.status}`
+    try {
+      const errBody = await res.json()
+      errMsg = `HTTP ${res.status}: ${errBody?.error?.message || JSON.stringify(errBody?.error) || res.statusText}`
+    } catch {}
+    throw new Error(errMsg)
+  }
+
+  const d = await res.json()
+  if (d.error) throw new Error(d.error.message || JSON.stringify(d.error))
+  return d.content?.[0]?.text ?? ""
+}
+
 // ─── FILE HELPERS ─────────────────────────────────────────────────────────────
 async function toBase64(file) {
   return new Promise((res, rej) => {
