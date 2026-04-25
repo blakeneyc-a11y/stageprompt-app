@@ -338,128 +338,151 @@ function OffBookLogo({ variant="light", displayHeight=56, withTagline=false }) {
 }
 
 // ─── BOOK ANIMATION ──────────────────────────────────────────────────────────
-// An open book viewed from below at an angle — right page turns continuously
+// Open book viewed from below at an angle.
+// ONLY the right page turns — flipping over the spine to land on the left,
+// exactly like a real book. The container has no overflow clipping so the
+// page can freely sweep all the way across.
 function BookAnimation() {
+  const lines7 = [1,2,3,4,5,6,7]
   return (
     <div className="book-wrap" aria-hidden="true">
       <style>{`
         .book-wrap {
-          display: flex; align-items: center; justify-content: center;
-          margin-bottom: 1.5rem; perspective: 900px;
+          display:flex; align-items:center; justify-content:center;
+          margin-bottom:1.5rem;
+          perspective:1000px;
         }
-        /* The whole book tilted towards the viewer */
+        /* Whole book tilted toward viewer (rotateX pushes top away) */
         .book-3d {
-          width: 160px; height: 100px;
-          transform: rotateX(38deg) rotateZ(-4deg);
-          transform-style: preserve-3d;
-          position: relative;
-          filter: drop-shadow(0 18px 28px rgba(99,102,241,.22));
+          width:160px; height:96px;
+          position:relative;
+          transform:rotateX(42deg) rotateZ(-4deg);
+          transform-style:preserve-3d;
+          filter:drop-shadow(0 22px 32px rgba(99,102,241,.28));
         }
-        /* Left page — static */
+        /* ── Left page – static ── */
         .bk-left {
-          position: absolute; left: 0; top: 0;
-          width: 78px; height: 100px;
-          background: linear-gradient(to right, #EEF2FF 80%, #dde4ff);
-          border-radius: 2px 0 0 2px;
-          display: flex; flex-direction: column; justify-content: center;
-          gap: 6px; padding: 10px 10px 10px 12px;
-          box-shadow: inset -4px 0 8px rgba(99,102,241,.08);
+          position:absolute; left:0; top:0;
+          width:76px; height:96px;
+          background:linear-gradient(to right,#E8ECFF,#EEF2FF);
+          border-radius:2px 0 0 2px;
+          display:flex; flex-direction:column;
+          justify-content:center; gap:6px;
+          padding:10px 8px 10px 12px;
+          transform:translateZ(0px);
         }
-        .bk-left .ln { height: 3px; background: #A5B4FC; border-radius: 2px; }
-        .bk-left .ln:nth-child(2){width:70%}
-        .bk-left .ln:nth-child(3){width:88%}
-        .bk-left .ln:nth-child(4){width:62%}
-        .bk-left .ln:nth-child(5){width:80%}
-        .bk-left .ln:nth-child(6){width:74%}
-        .bk-left .ln:nth-child(7){width:90%}
-        /* Spine */
+        /* ── Right-page backing – shows "next page" while the turning page is in the air ── */
+        .bk-right-bg {
+          position:absolute; left:84px; top:0;
+          width:76px; height:96px;
+          background:linear-gradient(to left,#E8ECFF,#EEF2FF);
+          border-radius:0 2px 2px 0;
+          display:flex; flex-direction:column;
+          justify-content:center; gap:6px;
+          padding:10px 12px 10px 8px;
+          transform:translateZ(0px);
+        }
+        /* ── Spine ── */
         .bk-spine {
-          position: absolute; left: 76px; top: 0;
-          width: 8px; height: 100px;
-          background: linear-gradient(to right, #818CF8, #6366F1);
-          z-index: 3;
-          box-shadow: 0 0 6px rgba(99,102,241,.4);
+          position:absolute; left:76px; top:0;
+          width:8px; height:96px;
+          background:linear-gradient(to right,#4F46E5,#818CF8);
+          transform:translateZ(3px);   /* floats above pages */
+          border-radius:1px;
+          box-shadow:0 0 8px rgba(99,102,241,.5);
         }
-        /* Right page container — keeps the flap inside */
-        .bk-right-wrap {
-          position: absolute; left: 84px; top: 0;
-          width: 76px; height: 100px;
-          overflow: hidden;
-          /* Faint right-edge curl illusion */
-          background: linear-gradient(to left, #dde4ff 0%, #EEF2FF 12%);
-          border-radius: 0 2px 2px 0;
-        }
-        /* The turning page — only the right half, origin at left */
+        /* ── The turning page ──────────────────────────────────────────────
+           Anchored at the SPINE (left:84px).
+           transform-origin:left center → pivots around the spine.
+           NO overflow clipping on any parent — page sweeps freely left.
+           rotateY goes 0° (flat right) → -180° (flat left, back face up).
+        ── */
         .bk-page {
-          position: absolute; top: 0; left: 0;
-          width: 76px; height: 100px;
-          transform-origin: left center;
-          transform-style: preserve-3d;
-          animation: flipRight 2.4s cubic-bezier(.45,0,.55,1) infinite;
+          position:absolute; left:84px; top:0;
+          width:76px; height:96px;
+          transform-origin:left center;
+          transform-style:preserve-3d;
+          animation:bookFlip 2.8s cubic-bezier(.4,0,.2,1) infinite;
         }
-        .bk-page-front, .bk-page-back {
-          position: absolute; width: 100%; height: 100%;
-          backface-visibility: hidden;
-          display: flex; flex-direction: column; justify-content: center;
-          gap: 6px; padding: 10px 12px 10px 6px;
-        }
+        /* Front face — visible while page is on the right */
         .bk-page-front {
-          background: linear-gradient(to left, #EEF2FF 80%, #eaedff);
+          position:absolute; inset:0;
+          background:linear-gradient(to left,#EEF2FF,#F4F5FF);
+          backface-visibility:hidden;
+          display:flex; flex-direction:column;
+          justify-content:center; gap:6px;
+          padding:10px 12px 10px 8px;
+          border-radius:0 2px 2px 0;
         }
+        /* Back face — visible once page has flipped to the left.
+           rotateY(180°) makes it face the viewer when the page is at -180°.
+           Text order/padding is LEFT-page style. */
         .bk-page-back {
-          background: linear-gradient(to right, #dde4ff 10%, #EEF2FF 80%);
-          transform: rotateY(180deg);
-          padding: 10px 6px 10px 12px;
+          position:absolute; inset:0;
+          background:linear-gradient(to right,#EEF2FF,#E8ECFF);
+          backface-visibility:hidden;
+          transform:rotateY(180deg);
+          display:flex; flex-direction:column;
+          justify-content:center; gap:6px;
+          padding:10px 8px 10px 12px;
+          border-radius:2px 0 0 2px;
         }
-        .bk-page-front .ln, .bk-page-back .ln {
-          height: 3px; background: #818CF8; border-radius: 2px;
-        }
-        .bk-page-front .ln:nth-child(1){width:82%}
-        .bk-page-front .ln:nth-child(2){width:68%}
-        .bk-page-front .ln:nth-child(3){width:91%}
-        .bk-page-front .ln:nth-child(4){width:74%}
-        .bk-page-front .ln:nth-child(5){width:85%}
-        .bk-page-front .ln:nth-child(6){width:60%}
-        .bk-page-front .ln:nth-child(7){width:78%}
-        .bk-page-back .ln:nth-child(1){width:75%;background:#A5B4FC}
-        .bk-page-back .ln:nth-child(2){width:88%;background:#A5B4FC}
-        .bk-page-back .ln:nth-child(3){width:64%;background:#A5B4FC}
-        .bk-page-back .ln:nth-child(4){width:90%;background:#A5B4FC}
-        .bk-page-back .ln:nth-child(5){width:72%;background:#A5B4FC}
-        .bk-page-back .ln:nth-child(6){width:83%;background:#A5B4FC}
-        .bk-page-back .ln:nth-child(7){width:68%;background:#A5B4FC}
-        /* Page turns from 0° (flat right) → -180° (now left side), then snaps back */
-        @keyframes flipRight {
-          0%   { transform: rotateY(0deg); }
-          40%  { transform: rotateY(-170deg); }
-          55%  { transform: rotateY(-180deg); }
-          75%  { transform: rotateY(-180deg); }
-          100% { transform: rotateY(0deg); }
-        }
-        /* Shadow that sweeps as the page turns */
+        .bk-ln { height:3px; border-radius:2px; }
+        .bk-left .bk-ln, .bk-right-bg .bk-ln { background:#A5B4FC; }
+        .bk-page-front .bk-ln { background:#818CF8; }
+        .bk-page-back  .bk-ln { background:#A5B4FC; }
+        /* Vary line widths so it reads like actual text */
+        .bk-ln:nth-child(1){width:82%}.bk-ln:nth-child(2){width:68%}
+        .bk-ln:nth-child(3){width:90%}.bk-ln:nth-child(4){width:74%}
+        .bk-ln:nth-child(5){width:86%}.bk-ln:nth-child(6){width:61%}
+        .bk-ln:nth-child(7){width:78%}
+        /* Subtle shadow that sweeps as the page turns */
         .bk-shadow {
-          position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-          pointer-events: none;
-          background: linear-gradient(to right, rgba(79,70,229,.18), transparent 60%);
-          animation: sweepShadow 2.4s cubic-bezier(.45,0,.55,1) infinite;
-          border-radius: 0 2px 2px 0;
+          position:absolute; inset:0;
+          pointer-events:none;
+          background:linear-gradient(to right,rgba(79,70,229,.22),transparent 70%);
+          animation:sweepShadow 2.8s cubic-bezier(.4,0,.2,1) infinite;
+          border-radius:0 2px 2px 0;
+        }
+        /* The key animation:
+           0%   page is flat on the RIGHT  (rotateY 0°)
+           40%  page has crossed the spine and lies flat on the LEFT (rotateY -180°)
+           65%  brief pause — you can "read" the new left page
+           66%  INSTANT snap back (happens during the very short gap)
+           100% page is flat on the RIGHT again — new right-page content visible
+        */
+        @keyframes bookFlip {
+          0%   { transform:translateZ(2px) rotateY(  0deg); }
+          38%  { transform:translateZ(2px) rotateY(-180deg); }
+          63%  { transform:translateZ(2px) rotateY(-180deg); }
+          63.5%{ transform:translateZ(2px) rotateY(  0deg); }  /* snap */
+          100% { transform:translateZ(2px) rotateY(  0deg); }
         }
         @keyframes sweepShadow {
-          0%   { opacity: 0; }
-          25%  { opacity: 1; }
-          55%  { opacity: 0; }
-          100% { opacity: 0; }
+          0%   { opacity:0; }
+          20%  { opacity:1; }
+          38%  { opacity:0; }
+          100% { opacity:0; }
         }
       `}</style>
       <div className="book-3d">
+        {/* Left page */}
         <div className="bk-left">
-          {[1,2,3,4,5,6,7].map(i=><div key={i} className="ln"/>)}
+          {lines7.map(i=><div key={i} className="bk-ln"/>)}
         </div>
+        {/* Right-page backing (shows while page is in the air) */}
+        <div className="bk-right-bg">
+          {lines7.map(i=><div key={i} className="bk-ln"/>)}
+        </div>
+        {/* Spine */}
         <div className="bk-spine"/>
-        <div className="bk-right-wrap">
-          <div className="bk-page">
-            <div className="bk-page-front">{[1,2,3,4,5,6,7].map(i=><div key={i} className="ln"/>)}</div>
-            <div className="bk-page-back">{[1,2,3,4,5,6,7].map(i=><div key={i} className="ln"/>)}</div>
+        {/* The turning page — sweeps right→left over the spine */}
+        <div className="bk-page">
+          <div className="bk-page-front">
+            {lines7.map(i=><div key={i} className="bk-ln"/>)}
+          </div>
+          <div className="bk-page-back">
+            {lines7.map(i=><div key={i} className="bk-ln"/>)}
           </div>
           <div className="bk-shadow"/>
         </div>
@@ -468,33 +491,6 @@ function BookAnimation() {
   )
 }
 
-// ─── API ──────────────────────────────────────────────────────────────────────
-const API   = "https://api.anthropic.com/v1/messages"
-const MODEL = "claude-sonnet-4-6"
-const pause = ms => new Promise(r => setTimeout(r, ms))
-let _key = ""
-
-async function askClaude(messages, system = "", maxTokens = 2000) {
-  const headers = {
-    "Content-Type": "application/json",
-    "anthropic-version": "2023-06-01",
-    "anthropic-dangerous-direct-browser-access": "true"
-  }
-  if (_key) headers["x-api-key"] = _key
-  const res = await fetch(API, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, system, messages })
-  })
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`
-    try { const b = await res.json(); msg = `HTTP ${res.status}: ${b?.error?.message || res.statusText}` } catch {}
-    throw new Error(msg)
-  }
-  const d = await res.json()
-  if (d.error) throw new Error(d.error.message || JSON.stringify(d.error))
-  return d.content?.[0]?.text ?? ""
-}
 
 // ─── FILE HELPERS ─────────────────────────────────────────────────────────────
 async function toBase64(file) {
@@ -708,11 +704,35 @@ export default function OffBook() {
   }, [])
   const pickVoice = useCallback((type, idx) => {
     if (!voices.length) return null
-    const fem = ["samantha","victoria","karen","moira","fiona","tessa","allison","ava","zira","hazel"]
-    const mal = ["daniel","alex","fred","george","james","david","mark","thomas","lee","gordon"]
-    const pool = voices.filter(v => { const n = v.name.toLowerCase(); if (type==="female") return n.includes("female")||fem.some(x=>n.includes(x)); if (type==="male") return n.includes("male")||mal.some(x=>n.includes(x)); return true })
-    const list = pool.length ? pool : voices
-    return list[idx % list.length] || voices[0] || null
+
+    // Score voices — higher = better quality. Strongly prefer neural/enhanced voices.
+    const score = v => {
+      const n = v.name.toLowerCase()
+      let s = 0
+      // Neural/enhanced voices are dramatically better
+      if (n.includes("neural") || n.includes("enhanced") || n.includes("premium")) s += 100
+      if (n.includes("natural")) s += 80
+      // Avoid obviously robotic voices
+      if (n.includes("compact") || n.includes("espeak") || n.includes("festival")) s -= 50
+      if (v.localService === false) s += 20  // network voices tend to be higher quality
+      // Gender preference
+      const fem = ["samantha","victoria","karen","moira","fiona","tessa","allison","ava","zira","hazel","siri","aria","jenny","emily","grace","susan","joanna","ivy","kendra","kimberly","salli","nicole","amy","emma","olivia","serena"]
+      const mal = ["daniel","alex","fred","george","james","david","mark","thomas","lee","gordon","matthew","brian","joey","justin","kevin","russell","rishi","tom","liam","arthur","harry","oliver"]
+      const isFem = n.includes("female") || fem.some(x => n.includes(x))
+      const isMal = n.includes("male") || mal.some(x => n.includes(x))
+      if (type === "female" && isFem) s += 30
+      if (type === "male" && isMal) s += 30
+      if (type === "female" && isMal) s -= 20
+      if (type === "male" && isFem) s -= 20
+      // Prefer en-GB / en-AU / en-US
+      if (v.lang?.startsWith("en")) s += 10
+      return s
+    }
+
+    const scored = voices.map(v => ({ v, s: score(v) })).sort((a, b) => b.s - a.s)
+    // From the top-matching voices, pick by idx so different characters sound different
+    const best = scored.filter(x => x.s === scored[0].s || x.s >= scored[0].s - 20)
+    return best[idx % best.length]?.v || scored[0]?.v || voices[0]
   }, [voices])
 
   // ── My roles (multiple characters) ───────────────────────────────────────
@@ -1145,8 +1165,17 @@ ${ch.text}` }], "Script parser. Return compact JSON.", 4000)
     window.speechSynthesis.cancel()
     const u = new SpeechSynthesisUtterance(text)
     const ch = script?.characters.find(c => c.name === charName)
-    if (ch) { u.voice = pickVoice(ch.voiceType, ch.voiceIdx); u.pitch = ch.voiceType === "female" ? 1.12 : 0.86; u.rate = 0.88 }
-    u.onend = resolve; u.onerror = resolve; window.speechSynthesis.speak(u)
+    if (ch) {
+      u.voice  = pickVoice(ch.voiceType, ch.voiceIdx)
+      u.rate   = ch.voiceType === "female" ? 0.82 : 0.78  // slower = clearer, more human
+      u.pitch  = ch.voiceType === "female" ? 1.05 : 0.92  // subtle gender difference
+      u.volume = 1
+    } else {
+      u.rate = 0.82; u.pitch = 1.0; u.volume = 1
+    }
+    u.onend = resolve; u.onerror = resolve
+    // Brief pause lets browser audio init properly — reduces robotic "click" at start
+    setTimeout(() => window.speechSynthesis.speak(u), 60)
   }), [recordings, script, pickVoice])
 
   // ── Rehearsal ──────────────────────────────────────────────────────────────
