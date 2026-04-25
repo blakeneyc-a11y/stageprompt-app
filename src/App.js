@@ -20,7 +20,7 @@ function OffBookLogo({ variant="light", size=180 }) {
   return (
     <div style={{ width: size, height: Math.round(size * 0.29), overflow: "hidden", flexShrink: 0 }}>
       <img src={LOGO} alt="OffBook"
-        style={{ width: size, height: size * 0.58, objectFit: "cover", display: "block", ...clipStyle }} />
+        style={{ width: size, height: size * 0.58, objectFit: "cover", display: "block", border: "none", textDecoration: "none", ...clipStyle }} />
     </div>
   )
 }
@@ -831,9 +831,8 @@ export default function OffBook() {
       {screen === "library" && (
         <div className="screen lib-screen">
           <header className="lib-head">
-            <div style={{display:"flex",alignItems:"center",gap:"0.75rem"}}>
-              <OffBookLogo variant="light" size={140} />
-              <p className="lib-sub" style={{marginTop:0}}>My Script Library</p>
+            <div style={{display:"flex",alignItems:"center",textDecoration:"none",border:"none"}}>
+              <OffBookLogo variant="light" size={260} />
             </div>
             <div className="lib-head-right">
               {user && <span className="lib-user">{user.email}</span>}
@@ -860,7 +859,7 @@ export default function OffBook() {
             {libLoading && <p className="lib-loading">Loading your scripts…</p>}
             {!libLoading && library.length === 0 && (
               <div className="lib-empty">
-                <p className="lib-empty-icon">📜</p>
+                <p className="lib-empty-icon">📖</p>
                 <p className="lib-empty-title">No scripts yet</p>
                 <p className="lib-empty-sub">Upload your first script to get started</p>
                 <button className="go-btn" onClick={()=>setScreen("upload")}>+ Upload Script</button>
@@ -1428,8 +1427,10 @@ const CSS = `
 
 /* ── LIBRARY ── */
 .lib-screen{background:#F4F3F0;min-height:100vh;display:flex;flex-direction:column}
-.lib-head{display:flex;justify-content:space-between;align-items:center;background:#fff;padding:1.1rem 2rem;border-bottom:1px solid #E7E5E4;flex-shrink:0;gap:1rem;flex-wrap:wrap}
+.lib-head{display:flex;justify-content:space-between;align-items:center;background:#fff;padding:.75rem 2rem;border-bottom:1px solid #E7E5E4;flex-shrink:0;gap:1rem;flex-wrap:wrap}
 .lib-title{font-size:1.2rem;font-weight:700;color:#1C1917}
+.lib-head img{border:none!important;text-decoration:none!important;outline:none}
+.lib-head div{border-bottom:none!important;text-decoration:none!important}
 .lib-sub{font-size:.8rem;color:#A8A29E;margin-top:.1rem;font-weight:500;letter-spacing:.04em;text-transform:uppercase}
 .lib-head-right{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}
 .lib-user{font-size:.8rem;color:#78716C;font-weight:500}
