@@ -903,7 +903,7 @@ export default function OffBook() {
     setProcStep("Splitting script into sections…"); setProcProg(64)
     const SCENE_RE = /(?:^|\n)((?:PROLOGUE|EPILOGUE|(?:ACT\s*\d+[\s,]*)?SCENE\s*\d+|Scene\s+\d+|Prologue|Epilogue)[^\n]*)/gi
     const hmatches = [...fullText.matchAll(SCENE_RE)]
-    const MAX_CHUNK = 12000, MIN_ADV = 7000  // larger chunks = fewer calls
+    const MAX_CHUNK = 9000, MIN_ADV = 5000   // 9k chars ≈ 2.5k tokens input, safe with 12s delays
     let chunks = []
     if (hmatches.length >= 2) {
       if (hmatches[0].index > 200) chunks.push({ label: "Opening", text: fullText.slice(0, Math.min(hmatches[0].index + 300, MAX_CHUNK)), scene: meta.sceneHeadings[0] || "Prologue" })
@@ -934,12 +934,30 @@ export default function OffBook() {
       setProcStep(`Parsing ${ch.label} — ${ci + 1} of ${chunks.length}…`)
       setProcProg(64 + Math.round((ci / chunks.length) * 29))
       try {
-        const pRaw = await askClaude([{ role: "user", content: `Parse this theatre play script section into JSON.\nKnown characters: ${knownChars}\nKnown sections: ${knownScenes}\nCurrent section: ${ch.scene}\n\nReturn ONLY this JSON (no markdown):\n{"lines":[{"character":"NAME","text":"exact dialogue","isStageDirection":false,"scene":"${ch.scene}","flagged":false},{"character":null,"text":"(Stage direction)","isStageDirection":true,"scene":"${ch.scene}","flagged":false}]}\n\nRULES:\n- Include EVERY spoken line including short ones ("Yes." "No!" "Help!")\n- Character name formats: NAME alone on a line, NAME., NAME:\n- Update "scene" field when a new heading appears\n- flagged:true ONLY for genuinely illegible text\n- DO NOT skip or omit any dialogue\n\nSCRIPT:\n${ch.text}` }], "Expert theatre script parser. Include every single line.", 8000)
+        const pRaw = await askClaude([{ role: "user", content: `Parse this theatre play script section into JSON.\nKnown characters: ${knownChars}\nKnown sections: ${knownScenes}\nCurrent section: ${ch.scene}\n\nReturn ONLY this JSON (no markdown):\n{"lines":[{"character":"NAME","text":"exact dialogue","isStageDirection":false,"scene":"${ch.scene}","flagged":false},{"character":null,"text":"(Stage direction)","isStageDirection":true,"scene":"${ch.scene}","flagged":false}]}\n\nRULES:\n- Include EVERY spoken line including short ones ("Yes." "No!" "Help!")\n- Character name formats: NAME alone on a line, NAME., NAME:\n- Update "scene" field when a new heading appears\n- flagged:true ONLY for genuinely illegible text\n- DO NOT skip or omit any dialogue\n\nSCRIPT:\n${ch.text}` }], "Expert theatre script parser. Include every single line. Return compact JSON only.", 4000)
         const pd = safeJSON(pRaw)
         if (pd && Array.isArray(pd.lines) && pd.lines.length > 0) allLines.push(...pd.lines.map(l => ({ ...l, _ci: ci })))
         else allLines.push({ character: null, text: `[${ch.label} parse failed: ${pRaw.slice(0, 80)}]`, isStageDirection: true, scene: ch.scene, flagged: true, _ci: ci })
-      } catch (e) { allLines.push({ character: null, text: `[API error: ${ch.label} — ${e.message}]`, isStageDirection: true, scene: ch.scene, flagged: true, _ci: ci }) }
-      if (ci < chunks.length - 1) await pause(8000) // 8s keeps under 30k tokens/min limit
+      } catch (e) {
+        if (e.message && e.message.includes('429')) {
+          // Rate limited — wait 20s then retry once
+          setProcStep(`Rate limit hit — waiting 20s before retrying ${ch.label}…`)
+          await pause(20000)
+          try {
+            const pRaw2 = await askClaude([{ role:"user", content:`Parse this script section into compact JSON lines array. Return ONLY {"lines":[...]}.
+Characters: ${knownChars}
+
+SCRIPT:
+${ch.text}` }], "Script parser. Return compact JSON.", 4000)
+            const pd2 = safeJSON(pRaw2)
+            if (pd2?.lines?.length > 0) allLines.push(...pd2.lines.map(l => ({ ...l, _ci: ci })))
+            else allLines.push({ character: null, text: `[${ch.label} retry also failed]`, isStageDirection: true, scene: ch.scene, flagged: true, _ci: ci })
+          } catch(e2) { allLines.push({ character: null, text: `[API error: ${ch.label} — ${e2.message}]`, isStageDirection: true, scene: ch.scene, flagged: true, _ci: ci }) }
+        } else {
+          allLines.push({ character: null, text: `[API error: ${ch.label} — ${e.message}]`, isStageDirection: true, scene: ch.scene, flagged: true, _ci: ci })
+        }
+      }
+      if (ci < chunks.length - 1) await pause(12000) // 12s = ~5 calls/min, safe under 30k limit
     }
 
     // Dedup
