@@ -261,6 +261,11 @@ const CSS = `
 .lib-empty-title{font-size:1.1rem;font-weight:700;color:#1C1917}
 .lib-empty-sub{font-size:.88rem;color:#A8A29E}
 .lib-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:1rem}
+.lib-tabs{display:flex;align-items:center;gap:.5rem;margin-bottom:1.5rem;flex-wrap:wrap}
+.lib-tab{background:#fff;border:1px solid #E7E5E4;color:#78716C;padding:.38rem .88rem;border-radius:8px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:.82rem;font-weight:600;transition:all .18s}
+.lib-tab.on{background:#1C1917;border-color:#1C1917;color:#fff}
+.lib-empty-trash-btn{margin-left:auto;background:transparent;border:1px solid #FECACA;color:#DC2626;padding:.32rem .75rem;border-radius:8px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:.78rem;font-weight:600;transition:all .18s}
+.lib-empty-trash-btn:hover{background:#FEE2E2}
 .lib-card{background:#fff;border:1px solid #E7E5E4;border-radius:12px;overflow:hidden;transition:border-color .18s,box-shadow .18s;display:flex;flex-direction:column}
 .lib-card:hover{border-color:#A8A29E;box-shadow:0 4px 16px rgba(0,0,0,.06)}
 .lib-card.active{border-color:#6366F1;box-shadow:0 0 0 3px rgba(99,102,241,.12)}
@@ -272,6 +277,20 @@ const CSS = `
 .lib-open-btn:hover{color:#4F46E5}
 .lib-del-btn{background:transparent;border:none;color:#D6D3CF;cursor:pointer;font-size:.85rem;padding:0;transition:color .15s}
 .lib-del-btn:hover{color:#DC2626}
+.lib-card-actions{display:flex;gap:.35rem;align-items:center}
+.lib-fav-btn{background:transparent;border:none;cursor:pointer;font-size:.85rem;padding:0;opacity:.3;transition:opacity .15s,transform .18s}
+.lib-fav-btn:hover{opacity:.7}
+.lib-fav-btn.on{opacity:1;transform:scale(1.15)}
+.lib-rename-btn{background:transparent;border:none;cursor:pointer;font-size:.8rem;padding:0;opacity:.35;transition:opacity .15s}
+.lib-rename-btn:hover{opacity:.8}
+.lib-rename-input{width:100%;background:#F4F3F0;border:1px solid #6366F1;border-radius:6px;padding:.32rem .6rem;font-family:'Lora',serif;font-style:italic;font-size:.9rem;color:#1C1917;outline:none;margin-bottom:.2rem}
+.lib-card.fav{border-color:#FCD34D}
+.lib-card.fav .lib-card-title::before{content:"⭐ ";font-size:.7em;vertical-align:middle}
+.trash-card{opacity:.75}
+.trash-card .lib-card-title{color:#78716C}
+.trash-date{color:#DC2626 !important}
+.lib-restore-btn{background:transparent;border:none;color:#16A34A;font-family:'Plus Jakarta Sans',sans-serif;font-size:.8rem;font-weight:700;cursor:pointer;padding:0;transition:color .15s}
+.lib-restore-btn:hover{color:#15803D}
 `
 
 
@@ -319,117 +338,130 @@ function OffBookLogo({ variant="light", displayHeight=56, withTagline=false }) {
 }
 
 // ─── BOOK ANIMATION ──────────────────────────────────────────────────────────
+// An open book viewed from below at an angle — right page turns continuously
 function BookAnimation() {
   return (
     <div className="book-wrap" aria-hidden="true">
       <style>{`
         .book-wrap {
           display: flex; align-items: center; justify-content: center;
-          margin-bottom: 1.5rem;
+          margin-bottom: 1.5rem; perspective: 900px;
         }
-        .book {
-          position: relative; width: 72px; height: 88px;
-          display: flex; gap: 0;
-        }
-        /* Spine */
-        .book-spine {
-          width: 6px; height: 100%; background: #6366F1;
-          border-radius: 2px 0 0 2px; flex-shrink: 0; z-index: 3;
-          box-shadow: 1px 0 4px rgba(99,102,241,.3);
-        }
-        /* Left page (static) */
-        .book-left {
-          width: 30px; height: 100%;
-          background: linear-gradient(to right, #EEF2FF, #F5F3FF);
-          border-top: 1.5px solid #C7D2FE;
-          border-bottom: 1.5px solid #C7D2FE;
-          display: flex; flex-direction: column;
-          justify-content: center; gap: 5px; padding: 10px 6px;
-          z-index: 2;
-        }
-        .book-left .line {
-          height: 3px; background: #A5B4FC; border-radius: 2px;
-        }
-        .book-left .line:nth-child(2) { width: 70%; }
-        .book-left .line:nth-child(3) { width: 90%; }
-        .book-left .line:nth-child(4) { width: 60%; }
-        .book-left .line:nth-child(5) { width: 80%; }
-        .book-left .line:nth-child(6) { width: 75%; }
-        /* Page turner — perspective container */
-        .page-turner {
-          width: 36px; height: 100%;
-          position: relative; perspective: 120px;
-        }
-        /* The turning page */
-        .page {
-          position: absolute; top: 0; left: 0;
-          width: 100%; height: 100%;
-          transform-origin: left center;
+        /* The whole book tilted towards the viewer */
+        .book-3d {
+          width: 160px; height: 100px;
+          transform: rotateX(38deg) rotateZ(-4deg);
           transform-style: preserve-3d;
-          animation: turnPage 2.2s ease-in-out infinite;
+          position: relative;
+          filter: drop-shadow(0 18px 28px rgba(99,102,241,.22));
         }
-        .page-front, .page-back {
-          position: absolute; width: 100%; height: 100%;
-          backface-visibility: hidden;
-          display: flex; flex-direction: column;
-          justify-content: center; gap: 5px; padding: 10px 6px;
-          border-top: 1.5px solid #C7D2FE;
-          border-bottom: 1.5px solid #C7D2FE;
-          border-right: 1.5px solid #C7D2FE;
+        /* Left page — static */
+        .bk-left {
+          position: absolute; left: 0; top: 0;
+          width: 78px; height: 100px;
+          background: linear-gradient(to right, #EEF2FF 80%, #dde4ff);
+          border-radius: 2px 0 0 2px;
+          display: flex; flex-direction: column; justify-content: center;
+          gap: 6px; padding: 10px 10px 10px 12px;
+          box-shadow: inset -4px 0 8px rgba(99,102,241,.08);
         }
-        .page-front {
-          background: linear-gradient(to left, #EEF2FF, #F0EEFF);
+        .bk-left .ln { height: 3px; background: #A5B4FC; border-radius: 2px; }
+        .bk-left .ln:nth-child(2){width:70%}
+        .bk-left .ln:nth-child(3){width:88%}
+        .bk-left .ln:nth-child(4){width:62%}
+        .bk-left .ln:nth-child(5){width:80%}
+        .bk-left .ln:nth-child(6){width:74%}
+        .bk-left .ln:nth-child(7){width:90%}
+        /* Spine */
+        .bk-spine {
+          position: absolute; left: 76px; top: 0;
+          width: 8px; height: 100px;
+          background: linear-gradient(to right, #818CF8, #6366F1);
+          z-index: 3;
+          box-shadow: 0 0 6px rgba(99,102,241,.4);
         }
-        .page-back {
-          background: linear-gradient(to right, #E0E7FF, #EEF2FF);
-          transform: rotateY(180deg);
-        }
-        .page-front .line, .page-back .line {
-          height: 3px; background: #818CF8; border-radius: 2px;
-        }
-        .page-front .line:nth-child(1) { width: 85%; }
-        .page-front .line:nth-child(2) { width: 65%; }
-        .page-front .line:nth-child(3) { width: 90%; }
-        .page-front .line:nth-child(4) { width: 70%; }
-        .page-front .line:nth-child(5) { width: 80%; }
-        .page-back .line:nth-child(1) { width: 75%; background:#A5B4FC; }
-        .page-back .line:nth-child(2) { width: 90%; background:#A5B4FC; }
-        .page-back .line:nth-child(3) { width: 60%; background:#A5B4FC; }
-        .page-back .line:nth-child(4) { width: 85%; background:#A5B4FC; }
-        .page-back .line:nth-child(5) { width: 70%; background:#A5B4FC; }
-        /* Shadow on page as it turns */
-        .page-shadow {
-          position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-          pointer-events: none; z-index: 1;
-          animation: pageShadow 2.2s ease-in-out infinite;
-          background: linear-gradient(to right, rgba(79,70,229,.18), transparent);
+        /* Right page container — keeps the flap inside */
+        .bk-right-wrap {
+          position: absolute; left: 84px; top: 0;
+          width: 76px; height: 100px;
+          overflow: hidden;
+          /* Faint right-edge curl illusion */
+          background: linear-gradient(to left, #dde4ff 0%, #EEF2FF 12%);
           border-radius: 0 2px 2px 0;
         }
-        @keyframes turnPage {
+        /* The turning page — only the right half, origin at left */
+        .bk-page {
+          position: absolute; top: 0; left: 0;
+          width: 76px; height: 100px;
+          transform-origin: left center;
+          transform-style: preserve-3d;
+          animation: flipRight 2.4s cubic-bezier(.45,0,.55,1) infinite;
+        }
+        .bk-page-front, .bk-page-back {
+          position: absolute; width: 100%; height: 100%;
+          backface-visibility: hidden;
+          display: flex; flex-direction: column; justify-content: center;
+          gap: 6px; padding: 10px 12px 10px 6px;
+        }
+        .bk-page-front {
+          background: linear-gradient(to left, #EEF2FF 80%, #eaedff);
+        }
+        .bk-page-back {
+          background: linear-gradient(to right, #dde4ff 10%, #EEF2FF 80%);
+          transform: rotateY(180deg);
+          padding: 10px 6px 10px 12px;
+        }
+        .bk-page-front .ln, .bk-page-back .ln {
+          height: 3px; background: #818CF8; border-radius: 2px;
+        }
+        .bk-page-front .ln:nth-child(1){width:82%}
+        .bk-page-front .ln:nth-child(2){width:68%}
+        .bk-page-front .ln:nth-child(3){width:91%}
+        .bk-page-front .ln:nth-child(4){width:74%}
+        .bk-page-front .ln:nth-child(5){width:85%}
+        .bk-page-front .ln:nth-child(6){width:60%}
+        .bk-page-front .ln:nth-child(7){width:78%}
+        .bk-page-back .ln:nth-child(1){width:75%;background:#A5B4FC}
+        .bk-page-back .ln:nth-child(2){width:88%;background:#A5B4FC}
+        .bk-page-back .ln:nth-child(3){width:64%;background:#A5B4FC}
+        .bk-page-back .ln:nth-child(4){width:90%;background:#A5B4FC}
+        .bk-page-back .ln:nth-child(5){width:72%;background:#A5B4FC}
+        .bk-page-back .ln:nth-child(6){width:83%;background:#A5B4FC}
+        .bk-page-back .ln:nth-child(7){width:68%;background:#A5B4FC}
+        /* Page turns from 0° (flat right) → -180° (now left side), then snaps back */
+        @keyframes flipRight {
           0%   { transform: rotateY(0deg); }
-          35%  { transform: rotateY(-160deg); }
+          40%  { transform: rotateY(-170deg); }
           55%  { transform: rotateY(-180deg); }
-          80%  { transform: rotateY(-180deg); }
+          75%  { transform: rotateY(-180deg); }
           100% { transform: rotateY(0deg); }
         }
-        @keyframes pageShadow {
+        /* Shadow that sweeps as the page turns */
+        .bk-shadow {
+          position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+          pointer-events: none;
+          background: linear-gradient(to right, rgba(79,70,229,.18), transparent 60%);
+          animation: sweepShadow 2.4s cubic-bezier(.45,0,.55,1) infinite;
+          border-radius: 0 2px 2px 0;
+        }
+        @keyframes sweepShadow {
           0%   { opacity: 0; }
-          20%  { opacity: 1; }
+          25%  { opacity: 1; }
           55%  { opacity: 0; }
           100% { opacity: 0; }
         }
       `}</style>
-      <div className="book">
-        <div className="book-spine"/>
-        <div className="book-left">
-          {[1,2,3,4,5,6].map(i => <div key={i} className="line"/>)}
+      <div className="book-3d">
+        <div className="bk-left">
+          {[1,2,3,4,5,6,7].map(i=><div key={i} className="ln"/>)}
         </div>
-        <div className="page-turner">
-          <div className="page">
-            <div className="page-front">{[1,2,3,4,5].map(i=><div key={i} className="line"/>)}</div>
-            <div className="page-back">{[1,2,3,4,5].map(i=><div key={i} className="line"/>)}</div>
+        <div className="bk-spine"/>
+        <div className="bk-right-wrap">
+          <div className="bk-page">
+            <div className="bk-page-front">{[1,2,3,4,5,6,7].map(i=><div key={i} className="ln"/>)}</div>
+            <div className="bk-page-back">{[1,2,3,4,5,6,7].map(i=><div key={i} className="ln"/>)}</div>
           </div>
-          <div className="page-shadow"/>
+          <div className="bk-shadow"/>
         </div>
       </div>
     </div>
@@ -526,14 +558,28 @@ async function correctOrientation(file) {
 }
 
 function safeJSON(raw) {
+  // Strip markdown fences
   let s = raw.replace(/```[a-z]*\n?/gi, "").replace(/```/g, "").trim()
   const fb = s.indexOf("{"); if (fb > 0) s = s.slice(fb)
+
+  // Attempt 1: parse as-is
   try { return JSON.parse(s) } catch {}
+
+  // Attempt 2: close unclosed brackets/braces
   try {
     let t = s, diff = (t.match(/[\[{]/g)||[]).length - (t.match(/[\]}]/g)||[]).length
     while (diff > 0) { t += t.lastIndexOf("[") > t.lastIndexOf("{") ? "]" : "}"; diff-- }
     return JSON.parse(t)
   } catch {}
+
+  // Attempt 3: extract all COMPLETE line objects from a truncated array
+  // This handles the case where JSON is cut off mid-object
+  try {
+    const lineRe = /\{"character":\s*(?:"[^"]*"|null)\s*,\s*"text":\s*"(?:[^"\\]|\\.)*"\s*,\s*"isStageDirection":\s*(?:true|false)\s*,\s*"scene":\s*"[^"]*"\s*,\s*"flagged":\s*(?:true|false)\s*\}/g
+    const matches = [...s.matchAll(lineRe)].map(m => JSON.parse(m[0]))
+    if (matches.length > 0) return { lines: matches }
+  } catch {}
+
   return null
 }
 
@@ -639,7 +685,10 @@ export default function OffBook() {
   // ── Library ───────────────────────────────────────────────────────────────
   const [library,    setLibrary]    = useState([])
   const [libLoading, setLibLoading] = useState(false)
-  const [savedId,    setSavedId]    = useState(null)  // id of currently loaded script
+  const [savedId,      setSavedId]      = useState(null)  // id of currently loaded script
+  const [libTab,       setLibTab]       = useState("all")  // "all"|"fav"|"trash"
+  const [renamingId,   setRenamingId]   = useState(null)
+  const [renameVal,    setRenameVal]    = useState("")
 
   // ── Processing ────────────────────────────────────────────────────────────
   const [procStep, setProcStep] = useState("")
@@ -724,7 +773,7 @@ export default function OffBook() {
   const loadLibrary = useCallback(async () => {
     if (!supabase || !user) return
     setLibLoading(true)
-    const { data } = await supabase.from("scripts").select("id,title,created_at,updated_at").eq("user_id", user.id).order("updated_at", { ascending: false })
+    const { data } = await supabase.from("scripts").select("id,title,created_at,updated_at,is_favourite,deleted_at").eq("user_id", user.id).order("updated_at", { ascending: false })
     setLibrary(data || [])
     setLibLoading(false)
   }, [user])
@@ -759,10 +808,52 @@ export default function OffBook() {
 
   const deleteScript = useCallback(async (id) => {
     if (!supabase) return
+    // Soft-delete: mark with deleted_at, keep for 30 days
+    const deletedAt = new Date().toISOString()
+    await supabase.from("scripts").update({ deleted_at: deletedAt }).eq("id", id)
+    setLibrary(l => l.map(s => s.id === id ? { ...s, deleted_at: deletedAt } : s))
+    if (savedId === id) { setSavedId(null); setScript(null) }
+  }, [savedId])
+
+  const restoreScript = useCallback(async (id) => {
+    if (!supabase) return
+    await supabase.from("scripts").update({ deleted_at: null }).eq("id", id)
+    setLibrary(l => l.map(s => s.id === id ? { ...s, deleted_at: null } : s))
+  }, [])
+
+  const permanentDelete = useCallback(async (id) => {
+    if (!supabase) return
     await supabase.from("scripts").delete().eq("id", id)
     setLibrary(l => l.filter(s => s.id !== id))
     if (savedId === id) { setSavedId(null); setScript(null) }
   }, [savedId])
+
+  const emptyTrash = useCallback(async () => {
+    if (!supabase || !user) return
+    const trashIds = library.filter(s => s.deleted_at).map(s => s.id)
+    if (!trashIds.length) return
+    await supabase.from("scripts").delete().in("id", trashIds)
+    setLibrary(l => l.filter(s => !s.deleted_at))
+  }, [supabase, user, library])
+
+  const toggleFavourite = useCallback(async (id, current) => {
+    if (!supabase) return
+    await supabase.from("scripts").update({ is_favourite: !current }).eq("id", id)
+    setLibrary(l => l.map(s => s.id === id ? { ...s, is_favourite: !current } : s))
+  }, [])
+
+  const renameScript = useCallback(async (id, newTitle) => {
+    if (!supabase || !newTitle.trim()) return
+    const t = newTitle.trim()
+    await supabase.from("scripts").update({ title: t }).eq("id", id)
+    setLibrary(l => l.map(s => s.id === id ? { ...s, title: t } : s))
+    setRenamingId(null); setRenameVal("")
+  }, [])
+
+  const goHome = () => {
+    if (supabase && user) setScreen("library")
+    else setScreen("upload")
+  }
 
   const signOut = async () => {
     await supabase?.auth.signOut()
@@ -935,7 +1026,7 @@ export default function OffBook() {
       setProcStep(`Parsing ${ch.label} — ${ci + 1} of ${chunks.length}…`)
       setProcProg(64 + Math.round((ci / chunks.length) * 29))
       try {
-        const pRaw = await askClaude([{ role: "user", content: `Parse this theatre play script section into JSON.\nKnown characters: ${knownChars}\nKnown sections: ${knownScenes}\nCurrent section: ${ch.scene}\n\nReturn ONLY this JSON (no markdown):\n{"lines":[{"character":"NAME","text":"exact dialogue","isStageDirection":false,"scene":"${ch.scene}","flagged":false},{"character":null,"text":"(Stage direction)","isStageDirection":true,"scene":"${ch.scene}","flagged":false}]}\n\nRULES:\n- Include EVERY spoken line including short ones ("Yes." "No!" "Help!")\n- Character name formats: NAME alone on a line, NAME., NAME:\n- Update "scene" field when a new heading appears\n- flagged:true ONLY for genuinely illegible text\n- DO NOT skip or omit any dialogue\n\nSCRIPT:\n${ch.text}` }], "Expert theatre script parser. Include every single line. Return compact JSON only.", 4000)
+        const pRaw = await askClaude([{ role: "user", content: `Parse this theatre play script section into JSON.\nKnown characters: ${knownChars}\nKnown sections: ${knownScenes}\nCurrent section: ${ch.scene}\n\nReturn ONLY this JSON (no markdown):\n{"lines":[{"character":"NAME","text":"exact dialogue","isStageDirection":false,"scene":"${ch.scene}","flagged":false},{"character":null,"text":"(Stage direction)","isStageDirection":true,"scene":"${ch.scene}","flagged":false}]}\n\nRULES:\n- Include EVERY spoken line including short ones ("Yes." "No!" "Help!")\n- Character name formats: NAME alone on a line, NAME., NAME:\n- Update "scene" field when a new heading appears\n- flagged:true ONLY for genuinely illegible text\n- DO NOT skip or omit any dialogue\n\nSCRIPT:\n${ch.text}` }], "Expert theatre script parser. Include every single line. Return compact JSON only.", 7000)
         const pd = safeJSON(pRaw)
         if (pd && Array.isArray(pd.lines) && pd.lines.length > 0) allLines.push(...pd.lines.map(l => ({ ...l, _ci: ci })))
         else allLines.push({ character: null, text: `[${ch.label} parse failed: ${pRaw.slice(0, 80)}]`, isStageDirection: true, scene: ch.scene, flagged: true, _ci: ci })
@@ -1142,7 +1233,7 @@ ${ch.text}` }], "Script parser. Return compact JSON.", 4000)
       {screen === "library" && (
         <div className="screen lib-screen">
           <header className="lib-head">
-            <div style={{display:"flex",alignItems:"center",textDecoration:"none",border:"none"}}>
+            <div style={{display:"flex",alignItems:"center",textDecoration:"none",border:"none",cursor:"default"}}>
               <OffBookLogo variant="light" displayHeight={52} withTagline={false} />
             </div>
             <div className="lib-head-right">
@@ -1167,29 +1258,93 @@ ${ch.text}` }], "Script parser. Return compact JSON.", 4000)
           )}
 
           <div className="lib-body">
-            {libLoading && <p className="lib-loading">Loading your scripts…</p>}
-            {!libLoading && library.length === 0 && (
-              <div className="lib-empty">
-                <p className="lib-empty-icon">📖</p>
-                <p className="lib-empty-title">No scripts yet</p>
-                <p className="lib-empty-sub">Upload your first script to get started</p>
-                <button className="go-btn" onClick={()=>setScreen("upload")}>+ Upload Script</button>
-              </div>
-            )}
-            <div className="lib-grid">
-              {library.map(s => (
-                <div key={s.id} className={`lib-card${savedId===s.id?" active":""}`}>
-                  <div className="lib-card-body" onClick={()=>loadScript(s.id)}>
-                    <p className="lib-card-title">{s.title}</p>
-                    <p className="lib-card-date">Last opened {new Date(s.updated_at).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</p>
-                  </div>
-                  <div className="lib-card-foot">
-                    <button className="lib-open-btn" onClick={()=>loadScript(s.id)}>Open →</button>
-                    <button className="lib-del-btn" onClick={()=>{ if(window.confirm(`Delete "${s.title}"?`)) deleteScript(s.id) }}>🗑</button>
-                  </div>
-                </div>
+            {/* Tab bar */}
+            <div className="lib-tabs">
+              {[["all","All Scripts"],["fav","⭐ Favourites"],["trash","🗑 Trash"]].map(([tab,label])=>(
+                <button key={tab} className={`lib-tab${libTab===tab?" on":""}`} onClick={()=>setLibTab(tab)}>{label}</button>
               ))}
+              {libTab==="trash" && library.some(s=>s.deleted_at) && (
+                <button className="lib-empty-trash-btn" onClick={()=>{if(window.confirm("Permanently delete all items in Trash?")) emptyTrash()}}>Empty Trash</button>
+              )}
             </div>
+
+            {libLoading && <p className="lib-loading">Loading your scripts…</p>}
+
+            {/* ALL / FAVOURITES tab */}
+            {!libLoading && libTab !== "trash" && (() => {
+              const active = library.filter(s => !s.deleted_at && (libTab==="all" || s.is_favourite))
+              if (!active.length) return (
+                <div className="lib-empty">
+                  <p className="lib-empty-icon">📖</p>
+                  <p className="lib-empty-title">{libTab==="fav" ? "No favourites yet" : "No scripts yet"}</p>
+                  <p className="lib-empty-sub">{libTab==="fav" ? "Star a script to add it here" : "Upload your first script to get started"}</p>
+                  {libTab==="all" && <button className="go-btn" onClick={()=>setScreen("upload")}>+ Upload Script</button>}
+                </div>
+              )
+              return (
+                <div className="lib-grid">
+                  {active.map(s => (
+                    <div key={s.id} className={`lib-card${savedId===s.id?" active":""}${s.is_favourite?" fav":""}`}>
+                      <div className="lib-card-body" onClick={()=>{ if(renamingId!==s.id) loadScript(s.id) }}>
+                        {renamingId===s.id ? (
+                          <input className="lib-rename-input" autoFocus value={renameVal}
+                            onChange={e=>setRenameVal(e.target.value)}
+                            onKeyDown={e=>{if(e.key==="Enter")renameScript(s.id,renameVal);if(e.key==="Escape"){setRenamingId(null);setRenameVal("")}}}
+                            onClick={e=>e.stopPropagation()}/>
+                        ) : (
+                          <p className="lib-card-title">{s.title}</p>
+                        )}
+                        <p className="lib-card-date">Last opened {new Date(s.updated_at).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</p>
+                      </div>
+                      <div className="lib-card-foot">
+                        <button className="lib-open-btn" onClick={()=>loadScript(s.id)}>Open →</button>
+                        <div className="lib-card-actions">
+                          <button className={`lib-fav-btn${s.is_favourite?" on":""}`} title={s.is_favourite?"Unfavourite":"Favourite"}
+                            onClick={()=>toggleFavourite(s.id, s.is_favourite)}>⭐</button>
+                          <button className="lib-rename-btn" title="Rename"
+                            onClick={()=>{setRenamingId(s.id);setRenameVal(s.title)}}>✏️</button>
+                          <button className="lib-del-btn" title="Move to Trash"
+                            onClick={()=>deleteScript(s.id)}>🗑</button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            })()}
+
+            {/* TRASH tab */}
+            {!libLoading && libTab === "trash" && (() => {
+              const trashed = library.filter(s => s.deleted_at)
+              if (!trashed.length) return (
+                <div className="lib-empty">
+                  <p className="lib-empty-icon">🗑</p>
+                  <p className="lib-empty-title">Trash is empty</p>
+                  <p className="lib-empty-sub">Deleted scripts appear here for 30 days</p>
+                </div>
+              )
+              return (
+                <div className="lib-grid">
+                  {trashed.map(s => {
+                    const deletedDays = Math.floor((Date.now()-new Date(s.deleted_at).getTime())/(1000*60*60*24))
+                    const daysLeft = 30 - deletedDays
+                    return (
+                      <div key={s.id} className="lib-card trash-card">
+                        <div className="lib-card-body">
+                          <p className="lib-card-title">{s.title}</p>
+                          <p className="lib-card-date trash-date">Deleted · {daysLeft} day{daysLeft!==1?"s":""} left</p>
+                        </div>
+                        <div className="lib-card-foot">
+                          <button className="lib-restore-btn" onClick={()=>restoreScript(s.id)}>↩ Restore</button>
+                          <button className="lib-del-btn" title="Delete permanently"
+                            onClick={()=>{if(window.confirm(`Permanently delete "${s.title}"? This cannot be undone.`)) permanentDelete(s.id)}}>✕</button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })()}
           </div>
         </div>
       )}
@@ -1198,7 +1353,7 @@ ${ch.text}` }], "Script parser. Return compact JSON.", 4000)
       {screen === "upload" && (
         <div className="screen center-screen">
           <div className="upload-box">
-            <div className="brand">
+            <div className="brand" style={{cursor:"pointer"}} onClick={goHome}>
               <OffBookLogo variant="light" displayHeight={80} withTagline={true} />
             </div>
             {supabase && user && (
