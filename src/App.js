@@ -835,6 +835,8 @@ export default function OffBook() {
     }
 
     // Step 3: PDFs — smart multi-pass, stops early when script is complete
+    // meta declared here so PDF passes can reference sceneHeadings for early exit
+    let meta = { title: "Untitled Play", characters: [], sceneHeadings: [] }
     for (let i = 0; i < pdfs.length; i++) {
       setProcStep(`Reading PDF${pdfs.length > 1 ? ` ${i + 1}/${pdfs.length}` : ""}…`)
       setProcProg(44 + Math.round((i / Math.max(pdfs.length, 1)) * 12))
@@ -882,7 +884,6 @@ export default function OffBook() {
 
     // Step 4: Multi-pass character & heading extraction
     setProcStep("Identifying all characters and scenes…"); setProcProg(59)
-    let meta = { title: "Untitled Play", characters: [], sceneHeadings: [] }
     try {
       const mRaw = await askClaude([{ role: "user", content: `Read this play script and find: (1) the play title, (2) EVERY character who speaks, (3) ALL section headings (Prologue, Scene 1 … Scene N, Epilogue etc.)\nReturn ONLY valid JSON:\n{"title":"Play Title","characters":["NAME1","NAME2"],"sceneHeadings":["Prologue","Scene 1"]}\nSCRIPT:\n${fullText.slice(0, 40000)}` }], "Theatre analyst. Return only valid compact JSON.", 3000); await pause(6000)
       const m = safeJSON(mRaw); if (m && Array.isArray(m.characters) && m.characters.length > 0) meta = m
