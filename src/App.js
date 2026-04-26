@@ -556,40 +556,30 @@ const pause = ms => new Promise(r => setTimeout(r, ms))
 // This prevents Chrome's background-tab throttling from stalling the process.
 const smartPause = ms => new Promise(resolve => {
   if (ms <= 0) { resolve(); return }
-  if (document.visibilityState === 'visible') {
-    // Tab is visible — use normal timer but watch for hide events
+  // Check visibility inside the promise (runs in browser, not at module load)
+  const isVisible = () => typeof document !== 'undefined' && document.visibilityState === 'visible'
+  const addVis = (fn) => typeof document !== 'undefined' && document.addEventListener('visibilitychange', fn)
+  const remVis = (fn) => typeof document !== 'undefined' && document.removeEventListener('visibilitychange', fn)
+
+  if (isVisible()) {
     let remaining = ms
     let started = Date.now()
     let timer = null
-    const onHide = () => {
-      remaining -= (Date.now() - started)
-      clearTimeout(timer)
-    }
+    const onHide = () => { remaining -= (Date.now() - started); clearTimeout(timer) }
     const onShow = () => {
       started = Date.now()
-      timer = setTimeout(() => {
-        document.removeEventListener('visibilitychange', onHide)
-        document.removeEventListener('visibilitychange', onShow)
-        resolve()
-      }, Math.max(0, remaining))
+      timer = setTimeout(() => { remVis(onChange); resolve() }, Math.max(0, remaining))
     }
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') onHide()
-      else onShow()
-    })
-    timer = setTimeout(() => {
-      document.removeEventListener('visibilitychange', onHide)
-      document.removeEventListener('visibilitychange', onShow)
-      resolve()
-    }, ms)
+    const onChange = () => { if (isVisible()) onShow(); else onHide() }
+    addVis(onChange)
+    timer = setTimeout(() => { remVis(onChange); resolve() }, ms)
   } else {
-    // Tab already hidden — wait until visible, then run the pause
     const onShow = () => {
-      if (document.visibilityState !== 'visible') return
-      document.removeEventListener('visibilitychange', onShow)
+      if (!isVisible()) return
+      remVis(onShow)
       pause(ms).then(resolve)
     }
-    document.addEventListener('visibilitychange', onShow)
+    addVis(onShow)
   }
 })
 
