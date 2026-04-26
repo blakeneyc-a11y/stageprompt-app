@@ -184,6 +184,9 @@ const CSS = `
 .sl-char{font-size:.67rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6366F1;min-width:94px;flex-shrink:0;padding-top:3px}
 .sl-text{font-size:.97rem;line-height:1.7;flex:1;color:#E5E7EB}.sl.cur .sl-text{color:#F9FAFB}
 .sl-pct{font-size:.75rem;font-weight:600;margin-left:auto;flex-shrink:0}
+.sl-hidden-line{color:#4B5563;font-style:italic;font-size:.88rem;letter-spacing:.05em}
+.sl.cur .sl-hidden-line{color:#818CF8;font-weight:600;font-size:.95rem;animation:breathe 1.6s ease-in-out infinite}
+.sl-past-spoken{color:#6B7280;font-style:italic;font-size:.88rem}
 .sl-pct.gold{color:#FBBF24}.sl-pct.ok{color:#34D399}.sl-pct.low{color:#F87171}
 .sw.click{cursor:pointer}.sw.click:hover{color:#A5B4FC;text-decoration:underline;text-decoration-style:dotted}
 .sw.ok{color:#34D399}.sw.bad{color:#F87171;text-decoration:line-through}
@@ -382,14 +385,17 @@ function BookAnimation() {
           padding:10px 12px 10px 8px;
           transform:translateZ(0px);
         }
-        /* ── Spine ── */
-        .bk-spine {
+        /* Spine removed — we're viewing the inside of the book */
+        /* A thin crease shadow replaces the spine for realism */
+        .bk-crease {
           position:absolute; left:76px; top:0;
-          width:8px; height:96px;
-          background:linear-gradient(to right,#4F46E5,#818CF8);
-          transform:translateZ(3px);   /* floats above pages */
-          border-radius:1px;
-          box-shadow:0 0 8px rgba(99,102,241,.5);
+          width:2px; height:96px;
+          background:linear-gradient(to bottom,
+            rgba(79,70,229,.0) 0%,
+            rgba(79,70,229,.18) 30%,
+            rgba(79,70,229,.18) 70%,
+            rgba(79,70,229,.0) 100%);
+          z-index:4; pointer-events:none;
         }
         /* ── The turning page ──────────────────────────────────────────────
            Anchored at the SPINE (left:84px).
@@ -444,23 +450,20 @@ function BookAnimation() {
           animation:sweepShadow 2.8s cubic-bezier(.4,0,.2,1) infinite;
           border-radius:0 2px 2px 0;
         }
-        /* The key animation:
-           0%   page is flat on the RIGHT  (rotateY 0°)
-           40%  page has crossed the spine and lies flat on the LEFT (rotateY -180°)
-           65%  brief pause — you can "read" the new left page
-           66%  INSTANT snap back (happens during the very short gap)
-           100% page is flat on the RIGHT again — new right-page content visible
-        */
+        /* bookFlip: right-page turns over the spine to land on the left.
+           Snap-back happens at exactly -90deg where the page is edge-on
+           and has zero visible width — making the reset completely invisible. */
         @keyframes bookFlip {
-          0%   { transform:translateZ(2px) rotateY(  0deg); }
-          38%  { transform:translateZ(2px) rotateY(-180deg); }
-          63%  { transform:translateZ(2px) rotateY(-180deg); }
-          63.5%{ transform:translateZ(2px) rotateY(  0deg); }  /* snap */
-          100% { transform:translateZ(2px) rotateY(  0deg); }
+          0%    { transform:translateZ(2px) rotateY(   0deg); }  /* flat right */
+          40%   { transform:translateZ(2px) rotateY(-180deg); }  /* flat left  */
+          62%   { transform:translateZ(2px) rotateY(-180deg); }  /* hold left  */
+          62.1% { transform:translateZ(2px) rotateY( -90deg); }  /* edge-on: invisible — snap! */
+          62.2% { transform:translateZ(2px) rotateY(   0deg); }  /* back to right, still invisible */
+          100%  { transform:translateZ(2px) rotateY(   0deg); }  /* wait on right */
         }
         @keyframes sweepShadow {
           0%   { opacity:0; }
-          20%  { opacity:1; }
+          18%  { opacity:1; }
           38%  { opacity:0; }
           100% { opacity:0; }
         }
@@ -474,8 +477,8 @@ function BookAnimation() {
         <div className="bk-right-bg">
           {lines7.map(i=><div key={i} className="bk-ln"/>)}
         </div>
-        {/* Spine */}
-        <div className="bk-spine"/>
+        {/* Crease shadow only — spine not visible from inside */}
+        <div className="bk-crease"/>
         {/* The turning page — sweeps right→left over the spine */}
         <div className="bk-page">
           <div className="bk-page-front">
@@ -1011,14 +1014,20 @@ export default function OffBook() {
           fullPdfText += (fullPdfText ? "\n\n" : "") + result
           rawTexts.push(result)
 
-          // Smart early exit: if we can see the end of the play, stop
-          const lower = fullPdfText.toLowerCase()
-          const hasEnding = lower.includes("epilogue") || lower.includes("end of play") ||
-            lower.includes("curtain") || lower.includes("blackout") ||
-            (meta.sceneHeadings.length > 0 &&
-              meta.sceneHeadings.slice(-1)[0] &&
-              lower.includes(meta.sceneHeadings.slice(-1)[0].toLowerCase()))
-          if (hasEnding && p >= 1) { setProcStep("PDF fully extracted ✓"); break }
+          // Smart early exit: only stop if ending keywords appear near the END of text
+          // (not in character lists or early mentions). Requires at least 2 passes.
+          if (p >= 2) {
+            const lower = fullPdfText.toLowerCase()
+            const tailLen = Math.max(2000, fullPdfText.length * 0.2)  // last 20%
+            const tail = lower.slice(-tailLen)
+            const hasEnding = tail.includes("end of play") || tail.includes("the end") ||
+              tail.includes("blackout") || tail.includes("curtain falls") ||
+              tail.includes("lights fade") ||
+              (meta.sceneHeadings.length > 0 &&
+                meta.sceneHeadings.slice(-1)[0] &&
+                tail.includes(meta.sceneHeadings.slice(-1)[0].toLowerCase().slice(0,12)))
+            if (hasEnding) { setProcStep("PDF fully extracted ✓"); break }
+          }
         } catch(e) {
           rawTexts.push(`[PDF pass ${p+1} error: ${e.message}]`)
           await pause(6000); break
@@ -1126,21 +1135,10 @@ ${ch.text}` }], "Script parser. Return compact JSON.", 4000)
       sceneMap.get(sc).push(line)
     }
 
-    // Only reorder if meta headings are in a clearly different order AND we trust them
-    // (i.e. we found all meta headings in the parsed output). Otherwise keep parse order.
-    let orderedNames = sceneOrder
-    if (meta.sceneHeadings?.length > 0) {
-      const fuzzy = s => s.toLowerCase().replace(/[^a-z0-9]/g, "")
-      const metaMapped = meta.sceneHeadings
-        .map(mh => sceneOrder.find(s => s === mh.trim()) || sceneOrder.find(s => fuzzy(s) === fuzzy(mh)))
-        .filter(Boolean)
-      // Only use meta order if we matched most of the parsed scenes (avoids partial reorder)
-      if (metaMapped.length >= Math.floor(sceneOrder.length * 0.7)) {
-        const metaSet = new Set(metaMapped)
-        orderedNames = [...metaMapped, ...sceneOrder.filter(s => !metaSet.has(s))]
-      }
-      // Otherwise keep sceneOrder (parse order) which is correct
-    }
+    // ALWAYS use parse order — the order lines appear in the document is the correct order.
+    // Meta reordering caused scenes to jumble because meta scene names don't perfectly
+    // match parsed scene names. Parse order IS document order. Never reorder.
+    const orderedNames = sceneOrder
 
     let scenes = orderedNames.filter(t => sceneMap.has(t)).map(title => ({ title, lines: sceneMap.get(title) }))
     if (!scenes.length && deduped.length > 0) scenes = [{ title: "Scene 1", lines: deduped }]
@@ -1229,12 +1227,21 @@ ${ch.text}` }], "Script parser. Return compact JSON.", 4000)
       if (!rehearsalOn.current) return
       const line = lines[i]
       setCurIdx(i); setCurSpoken(""); setCurAccuracy(null); setPromptHint(""); promptedRef.current = false
-      if (line.isStageDirection) { setPhase("stage"); await pause(1200); continue }
-      if (!myC.includes(line.character)) { setPhase("speaking"); await speak(line.text, line.character); await pause(350) }
+      if (line.isStageDirection) { setPhase("stage"); await pause(900); continue }
+      if (!myC.includes(line.character)) {
+        setPhase("speaking")
+        // If the NEXT line is the user's, prime the STT engine ~800ms before this line ends
+        // so recognition is ready the instant the character stops speaking
+        const nextLine = lines[i + 1]
+        const nextIsMe = nextLine && !nextLine.isStageDirection && myC.includes(nextLine.character)
+        await speak(line.text, line.character)
+        if (nextIsMe) await pause(50)  // near-zero gap before user's line
+        else await pause(280)
+      }
       else {
-        setPhase("myLine"); await pause(1800)
-        if (!rehearsalOn.current) return
+        // User's line — go straight to listening, no "myLine" holding phase
         setPhase("listening")
+        if (!rehearsalOn.current) return
         const spoken = await listenOnce()
         if (!rehearsalOn.current) return
         const accuracy = calcAccuracy(line.text, spoken)
@@ -1684,7 +1691,15 @@ ${ch.text}` }], "Script parser. Return compact JSON.", 4000)
                   {!line.isStageDirection && <span className="sl-char">{line.character}</span>}
                   <span className="sl-text">
                     {isCur && isMe && phase === "showing" && result
+                      /* Just delivered — show colour-coded accuracy diff */
                       ? diffTokens(line.text, result.spoken).map((tok, j) => tok.sp ? <span key={j}> </span> : <span key={j} className={`sw ${tok.ok ? "ok" : "bad"}`} onClick={() => lookupWord(tok.text, line.text, "def")} onContextMenu={e => { e.preventDefault(); lookupWord(tok.text, line.text, "mod") }}>{tok.text}</span>)
+                      : isMe && !isPast
+                      /* Upcoming/current user line — hide text to force memory */
+                      ? <span className="sl-hidden-line">{isCur ? "🎤 Your line…" : "· · ·"}</span>
+                      : isMe && isPast && result
+                      /* Past user line — show what they actually said with accuracy */
+                      ? <span className="sl-past-spoken">"{result.spoken}"</span>
+                      /* Other character line — show normally with word lookup */
                       : line.text.split(/(\s+)/).map((tok, j) => /^\s+$/.test(tok) ? <span key={j}> </span> : <span key={j} className="sw click" onClick={() => lookupWord(tok, line.text, "def")} onContextMenu={e => { e.preventDefault(); lookupWord(tok, line.text, "mod") }}>{tok}</span>)
                     }
                   </span>
@@ -1696,11 +1711,10 @@ ${ch.text}` }], "Script parser. Return compact JSON.", 4000)
           <div className="dock">
             {phase === "speaking" && curLine && !curLine.isStageDirection && <div className="dock-row"><div className="waves">{[10,20,30,20,10].map((h, i) => <span key={i} style={{ height: h, animationDelay: `${i * .1}s` }} />)}</div><div><span className="dock-who">{curLine.character}</span><span className="dock-muted"> is speaking…</span></div></div>}
             {phase === "stage" && curLine && <div className="dock-row"><span>🎬</span><em className="dock-muted">{curLine.text}</em></div>}
-            {phase === "myLine" && <div className="dock-col"><div className="your-turn">YOUR LINE — {curLine?.character}</div><p className="dock-muted">Get ready…</p>{promptHint && <div className="prompt-hint">💡 {promptHint}</div>}</div>}
-            {phase === "listening" && <div className="dock-row listen-row"><div className="mic-pulse" /><div className="dock-col left"><span className="listen-lbl">Listening…</span>{curSpoken && <span className="interim">"{curSpoken}"</span>}{promptHint && <div className="prompt-hint">💡 {promptHint}</div>}</div><button className="hint-btn" onClick={requestPrompt}>💡 Prompt me</button></div>}
+            {phase === "listening" && <div className="dock-row listen-row"><div className="mic-pulse" /><div className="dock-col left"><div className="your-turn" style={{marginBottom:".2rem"}}>🎤 {curLine?.character} — your line</div>{curSpoken ? <span className="interim">"{curSpoken}"</span> : <span className="listen-lbl">Listening…</span>}{promptHint && <div className="prompt-hint">💡 {promptHint}</div>}</div><button className="hint-btn" onClick={requestPrompt}>💡 Prompt me</button></div>}
             {phase === "showing" && curAccuracy !== null && <div className="dock-row"><div className={`acc-ring ${curAccuracy === 100 ? "gold" : curAccuracy >= 75 ? "ok" : "low"}`}><span className="acc-num">{curAccuracy}%</span></div><div className="dock-col left">{curAccuracy === 100 ? <p className="bravo">✨ Word perfect!</p> : <><p className="you-said-lbl">You said:</p><p className="you-said">"{curSpoken || "(nothing recognised)"}"</p></>}</div></div>}
             {phase === "complete" && (() => { const { medal, accuracy, prompts } = scoreMedal(lineResults); const M = MEDALS[medal]; return <div className="dock-row complete-row"><span className="medal-em">{M.emoji}</span><div className="dock-col left"><div className="medal-lbl" style={{ color: M.color }}>{M.label}</div><div className="dock-muted">Accuracy: {accuracy}% · Prompts: {prompts}</div>{medal === "gold" && <div className="gold-msg">🌟 Perfect score!</div>}</div><div className="complete-btns"><button className="go-btn sm" onClick={startRehearsal}>🔁 Again</button><button className="exit-btn" onClick={stopRehearsal}>← Setup</button></div></div> })()}
-            {(phase === "listening" || phase === "myLine") && <p className="dock-tip">Click any word for definition · Right-click for modern English</p>}
+            {phase === "listening" && <p className="dock-tip">Click any word for definition · Right-click for modern English</p>}
           </div>
         </div>
       )}
