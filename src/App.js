@@ -554,34 +554,6 @@ const pause = ms => new Promise(r => setTimeout(r, ms))
 // Visibility-aware pause: if the tab goes hidden during a wait, it pauses
 // until the tab is visible again, then completes the remaining time.
 // This prevents Chrome's background-tab throttling from stalling the process.
-const smartPause = ms => new Promise(resolve => {
-  if (ms <= 0) { resolve(); return }
-  // Check visibility inside the promise (runs in browser, not at module load)
-  const isVisible = () => typeof document !== 'undefined' && document.visibilityState === 'visible'
-  const addVis = (fn) => typeof document !== 'undefined' && document.addEventListener('visibilitychange', fn)
-  const remVis = (fn) => typeof document !== 'undefined' && document.removeEventListener('visibilitychange', fn)
-
-  if (isVisible()) {
-    let remaining = ms
-    let started = Date.now()
-    let timer = null
-    const onHide = () => { remaining -= (Date.now() - started); clearTimeout(timer) }
-    const onShow = () => {
-      started = Date.now()
-      timer = setTimeout(() => { remVis(onChange); resolve() }, Math.max(0, remaining))
-    }
-    const onChange = () => { if (isVisible()) onShow(); else onHide() }
-    addVis(onChange)
-    timer = setTimeout(() => { remVis(onChange); resolve() }, ms)
-  } else {
-    const onShow = () => {
-      if (!isVisible()) return
-      remVis(onShow)
-      pause(ms).then(resolve)
-    }
-    addVis(onShow)
-  }
-})
 
 // API key — stored at module level, set from UI via _key = value
 let _key = ""
@@ -812,7 +784,6 @@ export default function OffBook() {
   const [procStep, setProcStep] = useState("")
   const [procProg, setProcProg] = useState(0)
   const [procErr,  setProcErr]  = useState("")
-  const [isTabHidden, setIsTabHidden] = useState(false)
 
   // ── Script data ───────────────────────────────────────────────────────────
   const [script, setScript] = useState(null)
@@ -901,23 +872,28 @@ export default function OffBook() {
   const [wLoad,   setWLoad]   = useState(false)
 
   // ── Auth & Library ────────────────────────────────────────────────────────
-  // Tab visibility tracking for processing pause indicator
-  useEffect(() => {
-    const handler = () => setIsTabHidden(document.visibilityState === 'hidden')
-    document.addEventListener('visibilitychange', handler)
-    return () => document.removeEventListener('visibilitychange', handler)
-  }, [])
-
   useEffect(() => {
     if (!supabase) return
+    let mounted = true
+
+    // getSession is async — safe
     supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!mounted) return
       if (session?.user) { setUser(session.user); setScreen("library") }
     })
+
+    // onAuthStateChange can fire synchronously in Supabase v2 on subscription setup,
+    // which would trigger React error #299. Defer with setTimeout to guarantee
+    // state updates always happen outside React's render phase.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
-      if (session?.user) { setUser(session.user); if (screen === "auth") setScreen("library") }
-      else { setUser(null); setScreen("auth") }
+      setTimeout(() => {
+        if (!mounted) return
+        if (session?.user) { setUser(session.user); setScreen(s => s === "auth" ? "library" : s) }
+        else { setUser(null); setScreen("auth") }
+      }, 0)
     })
-    return () => subscription.unsubscribe()
+
+    return () => { mounted = false; subscription.unsubscribe() }
   }, [])
 
   const loadLibrary = useCallback(async () => {
@@ -1071,7 +1047,7 @@ export default function OffBook() {
         content.push({ type: "text", text: `[Page ${ps + i}]` })
       }
       content.push({ type: "text", text: `Extract ALL text from these ${batch.length} theatre play script page(s). Label each === PAGE N ===. Preserve: character names (CAPS on own line), stage directions (brackets/parens), act/scene headings, every word of dialogue. Pages may be slightly rotated — read them regardless. Do not skip or summarise anything.` })
-      try { rawTexts.push(await askClaude([{ role: "user", content }], "Specialist script OCR. Extract every word faithfully.", Math.min(3000 * batch.length, 8000))); await smartPause(3000) }
+      try { rawTexts.push(await askClaude([{ role: "user", content }], "Specialist script OCR. Extract every word faithfully.", Math.min(3000 * batch.length, 8000))); await pause(3000) }
       catch (e) { rawTexts.push(`[Pages ${ps}-${pe} error: ${e.message}]`) }
     }
 
@@ -1092,7 +1068,7 @@ export default function OffBook() {
 
       for (let p = 0; p < MAX_PASSES; p++) {
         setProcStep(`Reading PDF — pass ${p+1}${p > 0 ? " (continuing…)" : ""}`)
-        await smartPause(5000) // 5s between PDF passes — visibility-aware
+        await pause(5000) // 5s between PDF passes — visibility-aware
 
         const prompt = p === 0
           ? "Extract ALL text from this theatre play script PDF from the very beginning. Preserve character names (CAPS on their own line), stage directions, act/scene headings, all dialogue verbatim. Do not skip or summarise anything."
@@ -1121,7 +1097,7 @@ export default function OffBook() {
           }
         } catch(e) {
           rawTexts.push(`[PDF pass ${p+1} error: ${e.message}]`)
-          await smartPause(6000); break
+          await pause(6000); break
         }
       }
     }
@@ -1137,7 +1113,7 @@ export default function OffBook() {
     } catch {}
     if (fullText.length > 40000) {
       try {
-        setProcStep("Scanning for additional characters…"); setProcProg(61); await smartPause(500)
+        setProcStep("Scanning for additional characters…"); setProcProg(61); await pause(500)
         const mRaw2 = await askClaude([{ role: "user", content: `From this second portion of the same play, find any ADDITIONAL speaking characters not in [${meta.characters.join(", ")}] and any additional scene headings.\nReturn ONLY JSON: {"additionalCharacters":[],"additionalHeadings":[]}\nSCRIPT:\n${fullText.slice(40000, 90000)}` }], "Theatre analyst. Return only valid compact JSON.", 2000); await pause(6000)
         const m2 = safeJSON(mRaw2)
         if (m2) {
@@ -1190,7 +1166,7 @@ export default function OffBook() {
         if (e.message && e.message.includes('429')) {
           // Rate limited — wait 20s then retry once
           setProcStep(`Rate limit hit — waiting 20s before retrying ${ch.label}…`)
-          await smartPause(20000)
+          await pause(20000)
           try {
             const pRaw2 = await askClaude([{ role:"user", content:`Parse this script section into compact JSON lines array. Return ONLY {"lines":[...]}.
 Characters: ${knownChars}
@@ -1205,7 +1181,7 @@ ${ch.text}` }], "Script parser. Return compact JSON.", 4000)
           allLines.push({ character: null, text: `[API error: ${ch.label} — ${e.message}]`, isStageDirection: true, scene: ch.scene, flagged: true, _ci: ci })
         }
       }
-      if (ci < chunks.length - 1) await smartPause(12000) // 12s — visibility-aware
+      if (ci < chunks.length - 1) await pause(12000) // 12s — visibility-aware
     }
 
     // Dedup
