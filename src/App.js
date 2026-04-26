@@ -551,6 +551,48 @@ const API   = "https://api.anthropic.com/v1/messages"
 const MODEL = "claude-sonnet-4-6"
 const pause = ms => new Promise(r => setTimeout(r, ms))
 
+// Visibility-aware pause: if the tab goes hidden during a wait, it pauses
+// until the tab is visible again, then completes the remaining time.
+// This prevents Chrome's background-tab throttling from stalling the process.
+const smartPause = ms => new Promise(resolve => {
+  if (ms <= 0) { resolve(); return }
+  if (document.visibilityState === 'visible') {
+    // Tab is visible — use normal timer but watch for hide events
+    let remaining = ms
+    let started = Date.now()
+    let timer = null
+    const onHide = () => {
+      remaining -= (Date.now() - started)
+      clearTimeout(timer)
+    }
+    const onShow = () => {
+      started = Date.now()
+      timer = setTimeout(() => {
+        document.removeEventListener('visibilitychange', onHide)
+        document.removeEventListener('visibilitychange', onShow)
+        resolve()
+      }, Math.max(0, remaining))
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') onHide()
+      else onShow()
+    })
+    timer = setTimeout(() => {
+      document.removeEventListener('visibilitychange', onHide)
+      document.removeEventListener('visibilitychange', onShow)
+      resolve()
+    }, ms)
+  } else {
+    // Tab already hidden — wait until visible, then run the pause
+    const onShow = () => {
+      if (document.visibilityState !== 'visible') return
+      document.removeEventListener('visibilitychange', onShow)
+      pause(ms).then(resolve)
+    }
+    document.addEventListener('visibilitychange', onShow)
+  }
+})
+
 // API key — stored at module level, set from UI via _key = value
 let _key = ""
 
@@ -780,6 +822,7 @@ export default function OffBook() {
   const [procStep, setProcStep] = useState("")
   const [procProg, setProcProg] = useState(0)
   const [procErr,  setProcErr]  = useState("")
+  const [isTabHidden, setIsTabHidden] = useState(false)
 
   // ── Script data ───────────────────────────────────────────────────────────
   const [script, setScript] = useState(null)
@@ -868,6 +911,13 @@ export default function OffBook() {
   const [wLoad,   setWLoad]   = useState(false)
 
   // ── Auth & Library ────────────────────────────────────────────────────────
+  // Tab visibility tracking for processing pause indicator
+  useEffect(() => {
+    const handler = () => setIsTabHidden(document.visibilityState === 'hidden')
+    document.addEventListener('visibilitychange', handler)
+    return () => document.removeEventListener('visibilitychange', handler)
+  }, [])
+
   useEffect(() => {
     if (!supabase) return
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -1031,7 +1081,7 @@ export default function OffBook() {
         content.push({ type: "text", text: `[Page ${ps + i}]` })
       }
       content.push({ type: "text", text: `Extract ALL text from these ${batch.length} theatre play script page(s). Label each === PAGE N ===. Preserve: character names (CAPS on own line), stage directions (brackets/parens), act/scene headings, every word of dialogue. Pages may be slightly rotated — read them regardless. Do not skip or summarise anything.` })
-      try { rawTexts.push(await askClaude([{ role: "user", content }], "Specialist script OCR. Extract every word faithfully.", Math.min(3000 * batch.length, 8000))); await pause(3000) }
+      try { rawTexts.push(await askClaude([{ role: "user", content }], "Specialist script OCR. Extract every word faithfully.", Math.min(3000 * batch.length, 8000))); await smartPause(3000) }
       catch (e) { rawTexts.push(`[Pages ${ps}-${pe} error: ${e.message}]`) }
     }
 
@@ -1052,7 +1102,7 @@ export default function OffBook() {
 
       for (let p = 0; p < MAX_PASSES; p++) {
         setProcStep(`Reading PDF — pass ${p+1}${p > 0 ? " (continuing…)" : ""}`)
-        await pause(5000) // 5s between PDF passes
+        await smartPause(5000) // 5s between PDF passes — visibility-aware
 
         const prompt = p === 0
           ? "Extract ALL text from this theatre play script PDF from the very beginning. Preserve character names (CAPS on their own line), stage directions, act/scene headings, all dialogue verbatim. Do not skip or summarise anything."
@@ -1081,7 +1131,7 @@ export default function OffBook() {
           }
         } catch(e) {
           rawTexts.push(`[PDF pass ${p+1} error: ${e.message}]`)
-          await pause(6000); break
+          await smartPause(6000); break
         }
       }
     }
@@ -1097,7 +1147,7 @@ export default function OffBook() {
     } catch {}
     if (fullText.length > 40000) {
       try {
-        setProcStep("Scanning for additional characters…"); setProcProg(61); await pause(500)
+        setProcStep("Scanning for additional characters…"); setProcProg(61); await smartPause(500)
         const mRaw2 = await askClaude([{ role: "user", content: `From this second portion of the same play, find any ADDITIONAL speaking characters not in [${meta.characters.join(", ")}] and any additional scene headings.\nReturn ONLY JSON: {"additionalCharacters":[],"additionalHeadings":[]}\nSCRIPT:\n${fullText.slice(40000, 90000)}` }], "Theatre analyst. Return only valid compact JSON.", 2000); await pause(6000)
         const m2 = safeJSON(mRaw2)
         if (m2) {
@@ -1150,7 +1200,7 @@ export default function OffBook() {
         if (e.message && e.message.includes('429')) {
           // Rate limited — wait 20s then retry once
           setProcStep(`Rate limit hit — waiting 20s before retrying ${ch.label}…`)
-          await pause(20000)
+          await smartPause(20000)
           try {
             const pRaw2 = await askClaude([{ role:"user", content:`Parse this script section into compact JSON lines array. Return ONLY {"lines":[...]}.
 Characters: ${knownChars}
@@ -1165,7 +1215,7 @@ ${ch.text}` }], "Script parser. Return compact JSON.", 4000)
           allLines.push({ character: null, text: `[API error: ${ch.label} — ${e.message}]`, isStageDirection: true, scene: ch.scene, flagged: true, _ci: ci })
         }
       }
-      if (ci < chunks.length - 1) await pause(12000) // 12s = ~5 calls/min, safe under 30k limit
+      if (ci < chunks.length - 1) await smartPause(12000) // 12s — visibility-aware
     }
 
     // Dedup
@@ -1212,12 +1262,20 @@ ${ch.text}` }], "Script parser. Return compact JSON.", 4000)
     setProcStep(pct > 50 ? `⚠ ${pct}% of lines need review.` : flagged.length ? `Done — ${dialogueLines.length} lines, ${flagged.length} flagged for review.` : `Script read! ${dialogueLines.length} lines · ${charList.length} characters · ${scenes.length} sections`)
     setScript(parsedScript); setProcProg(100)
 
-    // Auto-save to Supabase if logged in
+    // Auto-save to Supabase if logged in — and update library state immediately
     if (supabase && user) {
       setProcStep("Saving to your library…")
       try {
         const { data } = await supabase.from("scripts").insert({ user_id: user.id, title: parsedScript.title, script_data: parsedScript }).select("id").single()
-        if (data?.id) setSavedId(data.id)
+        if (data?.id) {
+          setSavedId(data.id)
+          const now = new Date().toISOString()
+          setLibrary(l => [{
+            id: data.id, title: parsedScript.title,
+            created_at: now, updated_at: now,
+            is_favourite: false, deleted_at: null
+          }, ...l.filter(s => s.id !== data.id)])
+        }
       } catch(e) { console.error("Save failed:", e) }
     }
 
