@@ -231,6 +231,57 @@ const CSS = `
 .wmod-close{margin-top:1.2rem;width:100%;background:#F4F3F0;border:1px solid #E7E5E4;color:#78716C;padding:.5rem;border-radius:9px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:.84rem;font-weight:600;transition:all .18s}
 .wmod-close:hover{background:#E7E5E4;color:#1C1917}
 ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#D6D3CF;border-radius:2px}
+/* ── MOBILE RESPONSIVE ─────────────────────────────────────────────────── */
+@media(max-width:600px){
+  /* Library */
+  .lib-head{padding:.6rem 1rem}
+  .lib-body{padding:1rem}
+  .lib-grid{grid-template-columns:1fr}
+  .lib-tabs{gap:.35rem}
+  .lib-tab{padding:.3rem .65rem;font-size:.76rem}
+  .lib-key-bar{padding:.65rem 1rem}
+  .lib-key-inner{flex-direction:column;align-items:stretch;gap:.5rem}
+
+  /* Upload / Auth */
+  .center-screen{padding:1.25rem 1rem}
+  .upload-box{max-width:100%}
+  .auth-card{padding:1.25rem}
+  .key-card{padding:1.25rem}
+  .key-row{flex-direction:column}
+  .key-row .go-btn{width:100%}
+
+  /* Processing */
+  .proc-card{padding:1.5rem 1.25rem;border-radius:12px}
+
+  /* Review */
+  .rev-head{padding:.8rem 1rem}
+  .rev-toolbar{padding:.5rem 1rem;gap:.6rem}
+  .rev-body{padding:1rem}
+  .rline-main{flex-direction:column;gap:.2rem}
+  .rline-char{min-width:unset}
+
+  /* Setup */
+  .setup-head{padding:1rem}
+  .setup-grid{padding:0 1rem;gap:1rem}
+
+  /* Rehearsal */
+  .reh-bar{padding:.5rem .75rem;gap:.4rem}
+  .reh-bar .reh-scene{font-size:.78rem;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .script-pane{padding:.75rem 1rem}
+  .sl{flex-direction:column;gap:.15rem;padding:.5rem .5rem}
+  .sl-char{min-width:unset;font-size:.65rem}
+  .sl-text{font-size:.88rem}
+  .dock{padding:.75rem 1rem;min-height:auto;gap:.35rem}
+  .dock-row{gap:.6rem}
+  .complete-btns{flex-direction:column;width:100%}
+  .complete-btns .go-btn,.complete-btns .exit-btn{width:100%;justify-content:center}
+
+  /* Word modal */
+  .wmodal{padding:1.25rem;border-radius:12px}
+  .overlay{align-items:flex-end}  /* sheet from bottom on mobile */
+  .wmodal{border-radius:16px 16px 0 0;max-width:100%;width:100%}
+}
+
 
 /* ── AUTH ── */
 .auth-box{text-align:center;width:100%;max-width:400px}
